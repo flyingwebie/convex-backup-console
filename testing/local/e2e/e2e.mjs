@@ -26,6 +26,7 @@ function totp(secret) {
 
 /** Enrols TOTP on /security and returns the secret. */
 async function enrol2fa(p, password, beforeCode) {
+  await p.locator('fieldset[data-hydrated="true"]').waitFor()
   await p.getByLabel('Confirm your password').fill(password)
   await p.getByRole('button', { name: 'Continue' }).click()
   const secret = (await p.locator('p code').first().textContent()).trim()
@@ -349,12 +350,20 @@ try {
   await page.waitForURL(`${URL_}/`)
   await sidebar.getByText('Flying Web').waitFor()
   await page.getByRole('link', { name: 'Settings' }).click()
-  await page.getByLabel(/Also delete their backup files/).click()
+  // Remote ON, local OFF: R2 copies get deleted on purge, local copies stay.
+  await page.getByRole('switch', { name: /Remote storage/ }).click()
   await page.getByRole('button', { name: 'Save policy' }).click()
   await page.getByText('Deletion policy saved').waitFor()
+  await page.getByRole('link', { name: 'Destinations' }).click()
+  await page.getByRole('button', { name: 'Add destination' }).first().click()
+  await dialog().getByRole('tab', { name: 'Local volume' }).click()
+  await dialog().getByLabel('Name').fill('local-vault')
+  await dialog().getByRole('button', { name: 'Add destination' }).click()
+  await page.getByRole('cell', { name: 'local-vault', exact: true }).waitFor()
   await page.getByRole('link', { name: 'Jobs' }).click()
   await page.getByRole('button', { name: 'New job' }).first().click()
   await dialog().getByLabel('Name').fill('purge-me')
+  await dialog().getByLabel('local-vault').check()
   await pick(dialog().getByRole('combobox').nth(1), 'Manual only')
   await dialog().getByRole('button', { name: 'Create job' }).click()
   await page.getByRole('cell', { name: /purge-me/ }).waitFor()
@@ -372,14 +381,17 @@ try {
   await page.getByRole('menuitem', { name: 'Move to trash' }).click()
   await page.getByRole('alertdialog').getByRole('button', { name: 'Move to trash' }).click()
   await page.getByRole('link', { name: 'Trash' }).click()
-  await page.getByText(/files are deleted from destinations when purged/).waitFor()
+  const localFiles = () => execSync(`docker exec ${CONTAINER} sh -c 'find /data/backups -type f 2>/dev/null | wc -l'`).toString().trim()
+  const localBefore = localFiles()
+  await page.getByText(/deleted from remote storage when purged; local copies are kept/).waitFor()
   await page.getByRole('button', { name: 'Delete now' }).click()
-  await page.getByRole('alertdialog').getByText(/will be deleted from every destination/).waitFor()
+  await page.getByRole('alertdialog').getByText(/remote storage when purged; local copies are kept/).waitFor()
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete permanently' }).click()
   await page.getByText('Trash is empty').waitFor()
   const final = s3ls().length
   if (final !== before) throw new Error(`Backup file not deleted from R2 (expected ${before}, found ${final})`)
-  ok(`policy "delete backup files": purging the job removed its backup from R2 (${after} → ${final} objects)`)
+  if (localFiles() !== localBefore || localBefore === '0') throw new Error(`Local copy should be kept (${localBefore} → ${localFiles()})`)
+  ok(`deletion policy: remote on / local off — purge removed the R2 copy (${after} → ${final}) and kept the local copy`)
 
   // Delete Acme → gone from switcher → restore from Platform
   await sidebar.getByRole('button').first().click()
@@ -608,6 +620,26 @@ try {
   if (action.status !== 0) throw new Error(`Action exited ${action.status}:\n${actionLog}`)
   if (!actionLog.includes('✅ Backup completed')) throw new Error(`Action did not succeed:\n${actionLog}`)
   ok('API tokens: read token can\'t run (403), bad token 401; the GitHub Action ran a backup and waited for "ok"')
+
+  // API switch off: API refuses; the Action skips (or fails with fail-when-disabled)
+  await page.getByRole('switch', { name: /Allow API access/ }).click()
+  await page.getByText('API access disabled').waitFor()
+  const off = await api('GET', '/api/v1/jobs', readToken)
+  if (off.status !== 403 || !(await off.text()).includes('disabled')) throw new Error(`Expected 403 disabled, got ${off.status}`)
+  const runAction = (extra = {}) =>
+    spawnSync('bash', ['-c', script], {
+      env: { ...process.env, CONSOLE: URL_, TOKEN: runToken, JOB: jobId, TIMEOUT: '5', ALLOW_PARTIAL: 'false', GITHUB_OUTPUT: outFile, ...extra },
+      encoding: 'utf8',
+    })
+  const skipped = runAction()
+  if (skipped.status !== 0 || !skipped.stdout.includes('Backup skipped')) throw new Error(`Action should skip:\n${skipped.stdout}${skipped.stderr}`)
+  const strict = runAction({ FAIL_WHEN_DISABLED: 'true' })
+  if (strict.status === 0) throw new Error('Action should fail with fail-when-disabled')
+  await shot('28-api-disabled')
+  await page.getByRole('switch', { name: /Allow API access/ }).click()
+  await page.getByText('API access enabled').waitFor()
+  if ((await api('GET', '/api/v1/jobs', readToken)).status !== 200) throw new Error('API should work again')
+  ok('API switch: off → 403 and the Action skips (fails with fail-when-disabled); back on → 200')
 
   // Status URL, audit CSV, platform SMTP, digest + invitation emails, storage page
   await page.reload()

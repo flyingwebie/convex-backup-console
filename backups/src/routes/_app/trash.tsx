@@ -9,10 +9,11 @@ import { Button } from '~/components/ui/button'
 import { Card } from '~/components/ui/card'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '~/components/ui/empty'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
-import { formatDate, timeAgo } from '~/lib/format'
+import { formatDate, purgeSummary, timeAgo } from '~/lib/format'
 import { useAction } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
 import { getTrash, purgeNow, restoreFromTrash } from '~/server/fns'
+
 
 export const Route = createFileRoute('/_app/trash')({
   loader: () => getTrash(),
@@ -39,7 +40,7 @@ function Trash() {
           </AlertTitle>
           <AlertDescription>
             <span>
-              {data.purge_backups ? 'Their backup files are deleted from destinations when purged.' : 'Their backup files stay in your buckets.'}{' '}
+              {purgeSummary(data.purge_remote, data.purge_local)}{' '}
               {can('settings') && <Link to="/workspace" className="underline">Change the deletion policy</Link>}
             </span>
           </AlertDescription>
@@ -89,9 +90,9 @@ function Trash() {
                               trigger={<Button size="sm" variant="ghost" className="text-destructive">Delete now</Button>}
                               title={`Permanently delete ${i.name}?`}
                               description={
-                                data.purge_backups && i.kind !== 'destination'
-                                  ? 'This cannot be undone. Its backup files will be deleted from every destination.'
-                                  : 'This cannot be undone. Backup files already stored are kept.'
+                                i.kind === 'destination'
+                                  ? 'This cannot be undone. Backup files already stored in it are kept.'
+                                  : `This cannot be undone. ${purgeSummary(data.purge_remote, data.purge_local, 'Its')}`
                               }
                               action="Delete permanently"
                               onConfirm={() => run(() => purge({ data: { kind: i.kind, id: i.id } }), { success: `${i.name} permanently deleted` })}

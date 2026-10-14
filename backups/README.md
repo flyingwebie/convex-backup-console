@@ -9,7 +9,9 @@ One shared console that backs up and restores **many** Convex deployments — **
 - **Members & roles:** invite by link (and email when SMTP is set). Roles: Owner, Admin, Operator
   (run and download, no restore), Viewer (read-only). Platform admins create workspaces and manage users.
 - **Deletion policy & Trash:** deleted workspaces, instances, jobs and destinations stay restorable for
-  N days (default 7), then are purged. Per workspace: keep their backup files (default) or delete them too.
+  N days (default 7), then are purged. Two separate toggles decide whether their backup files are also
+  deleted from **remote storage** (S3-compatible) and from **local storage** (volumes). Both are off by default.
+- **API switch:** API access and the GitHub Action can be turned off per workspace.
 
 - **Sources:** self-hosted Convex (URL + admin key) and **Convex Cloud** (deploy key; URL looked up automatically).
 - **Backups:** manual or cron, to S3-compatible storage (Cloudflare R2, AWS S3, Backblaze B2, MinIO)

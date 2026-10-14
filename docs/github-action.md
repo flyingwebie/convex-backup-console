@@ -34,6 +34,13 @@ jobs:
 The deploy only runs if the backup finished with status `ok`. Pass `allow-partial: "true"` to also
 accept backups where some, but not all, destinations failed.
 
+### Turning it off
+
+**Workspace settings → API tokens → Allow API access & GitHub Action** switches the whole API off for the
+workspace (tokens are kept). While it's off, the API answers `403 API access is disabled for this workspace` and
+the Action **skips the backup with a warning** (output `status=skipped`) so your deploy still runs.
+Set `fail-when-disabled: "true"` if you'd rather block deploys while it's off.
+
 ## REST API
 
 All endpoints take `Authorization: Bearer cbc_…` and act on the token's workspace.

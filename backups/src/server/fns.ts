@@ -780,7 +780,8 @@ export const getWorkspace = createServerFn({ method: 'GET' }).handler(async () =
       default_include_storage: Boolean(s.default_include_storage),
       stale_hours: s.stale_hours,
       trash_days: s.trash_days,
-      purge_backups: Boolean(s.purge_backups),
+      purge_remote: Boolean(s.purge_remote),
+      purge_local: Boolean(s.purge_local),
       recipient: s.age_recipient,
       status_url: s.status_token ? `${env.publicUrl}/api/status/${s.status_token}` : null,
       digest: s.digest,
@@ -837,10 +838,12 @@ export const updateWorkspaceDefaults = createServerFn({ method: 'POST' })
   })
 
 export const updateDeletionPolicy = createServerFn({ method: 'POST' })
-  .validator(parse(z.object({ trashDays: z.number().int().min(0).max(365), purgeBackups: z.boolean() })))
+  .validator(parse(z.object({ trashDays: z.number().int().min(0).max(365), purgeRemote: z.boolean(), purgeLocal: z.boolean() })))
   .handler(async ({ data }) => {
     const { ws, user } = await requireWorkspace('purge')
-    db().prepare('UPDATE workspace_settings SET trash_days = ?, purge_backups = ? WHERE workspace_id = ?').run(data.trashDays, data.purgeBackups ? 1 : 0, ws.id)
+    db()
+      .prepare('UPDATE workspace_settings SET trash_days = ?, purge_remote = ?, purge_local = ? WHERE workspace_id = ?')
+      .run(data.trashDays, data.purgeRemote ? 1 : 0, data.purgeLocal ? 1 : 0, ws.id)
     audit(ws.id, user.email, 'workspace.deletion_policy_updated', data)
   })
 
@@ -1019,7 +1022,8 @@ export const getTrash = createServerFn({ method: 'GET' }).handler(async () => {
   return {
     items: items.map((i) => ({ ...i, purge_at: i.deleted_at + s.trash_days * 86_400_000 })),
     trash_days: s.trash_days,
-    purge_backups: Boolean(s.purge_backups),
+    purge_remote: Boolean(s.purge_remote),
+    purge_local: Boolean(s.purge_local),
   }
 })
 
@@ -1255,6 +1259,7 @@ export const getApiTokens = createServerFn({ method: 'GET' }).handler(async () =
       .all(ws.id) as { id: string; name: string; prefix: string; scope: 'read' | 'run'; created_by: string; created_at: number; expires_at: number | null; last_used_at: number | null }[],
     jobs: listJobs(ws.id).map((j) => ({ id: j.id, name: j.name })),
     baseUrl: env.publicUrl,
+    enabled: Boolean(workspaceSettings(ws.id).api_enabled),
   }
 })
 
@@ -1270,6 +1275,14 @@ export const createApiToken = createServerFn({ method: 'POST' })
       .run(randomUUID(), ws.id, data.name, prefix, createHash('sha256').update(token).digest('hex'), data.scope, user.email, Date.now(), data.expiresInDays ? Date.now() + data.expiresInDays * 86_400_000 : null)
     audit(ws.id, user.email, 'api_token.created', { name: data.name, scope: data.scope, prefix })
     return { token }
+  })
+
+export const setApiEnabled = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ enabled: z.boolean() })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('settings')
+    db().prepare('UPDATE workspace_settings SET api_enabled = ? WHERE workspace_id = ?').run(data.enabled ? 1 : 0, ws.id)
+    audit(ws.id, user.email, data.enabled ? 'api.enabled' : 'api.disabled')
   })
 
 export const revokeApiToken = createServerFn({ method: 'POST' })

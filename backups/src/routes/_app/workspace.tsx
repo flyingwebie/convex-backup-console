@@ -1,6 +1,6 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Activity, Copy, Download, Eye, EyeOff, ImageUp, KeyRound, Mail, Plus, RefreshCw, Send, ShieldAlert, Trash2, TriangleAlert, Webhook, X } from 'lucide-react'
+import { Activity, Cloud, Copy, HardDrive, Download, Eye, EyeOff, ImageUp, KeyRound, Mail, Plus, RefreshCw, Send, ShieldAlert, Trash2, TriangleAlert, Webhook, X } from 'lucide-react'
 import { Badge } from '~/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { timeAgo } from '~/lib/format'
@@ -20,7 +20,9 @@ import { Switch } from '~/components/ui/switch'
 import { Textarea } from '~/components/ui/textarea'
 import { useAction } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
+import { purgeSummary } from '~/lib/format'
 import {
+  setApiEnabled,
   createEncryption,
   deleteWorkspace,
   getWorkspace,
@@ -257,13 +259,14 @@ function DeletionCard({ data, editable }: { data: Data; editable: boolean }) {
   const save = useServerFn(updateDeletionPolicy)
   const { run, pending } = useAction()
   const [trashDays, setTrashDays] = useState(String(data.settings.trash_days))
-  const [purgeBackups, setPurgeBackups] = useState(data.settings.purge_backups)
+  const [purgeRemote, setPurgeRemote] = useState(data.settings.purge_remote)
+  const [purgeLocal, setPurgeLocal] = useState(data.settings.purge_local)
   return (
     <Card>
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          void run(() => save({ data: { trashDays: Number(trashDays), purgeBackups } }), { success: 'Deletion policy saved' })
+          void run(() => save({ data: { trashDays: Number(trashDays), purgeRemote, purgeLocal } }), { success: 'Deletion policy saved' })
         }}
       >
         <CardHeader>
@@ -277,21 +280,34 @@ function DeletionCard({ data, editable }: { data: Data; editable: boolean }) {
               <Input id="trash-days" type="number" min={0} max={365} className="w-32" value={trashDays} disabled={!editable} onChange={(e) => setTrashDays(e.target.value)} />
               <FieldDescription>They can be restored during this time. 0 deletes immediately.</FieldDescription>
             </Field>
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Delete their backup files when purged</div>
+              <p className="text-muted-foreground text-sm">
+                Off (recommended): backups stay after the instance or job is gone, so you can still recover. On: they're deleted when the grace period
+                ends. Files under Object Lock are skipped until their lock expires; files in a deleted destination are never touched.
+              </p>
+            </div>
             <Field orientation="horizontal" className="rounded-md border p-3">
               <FieldContent>
-                <FieldLabel htmlFor="purge-backups">Also delete their backup files when purged</FieldLabel>
-                <FieldDescription>
-                  Off (recommended): backups stay in your buckets after the instance or job is gone, so you can still recover. On: they're deleted
-                  from every destination when the grace period ends. Files in a deleted destination are never touched.
-                </FieldDescription>
+                <FieldLabel htmlFor="purge-remote" className="flex items-center gap-2"><Cloud className="size-4" /> Remote storage</FieldLabel>
+                <FieldDescription>S3-compatible destinations: Cloudflare R2, AWS S3, Backblaze B2, MinIO…</FieldDescription>
               </FieldContent>
-              <Switch id="purge-backups" checked={purgeBackups} disabled={!editable} onCheckedChange={setPurgeBackups} />
+              <Switch id="purge-remote" checked={purgeRemote} disabled={!editable} onCheckedChange={setPurgeRemote} />
             </Field>
-            {purgeBackups && Number(trashDays) === 0 && (
+            <Field orientation="horizontal" className="rounded-md border p-3">
+              <FieldContent>
+                <FieldLabel htmlFor="purge-local" className="flex items-center gap-2"><HardDrive className="size-4" /> Local storage</FieldLabel>
+                <FieldDescription>Local-volume destinations on the console's server.</FieldDescription>
+              </FieldContent>
+              <Switch id="purge-local" checked={purgeLocal} disabled={!editable} onCheckedChange={setPurgeLocal} />
+            </Field>
+            {(purgeRemote || purgeLocal) && Number(trashDays) === 0 && (
               <Alert variant="destructive">
                 <TriangleAlert />
                 <AlertTitle>No safety net</AlertTitle>
-                <AlertDescription>Deleting an instance will immediately and permanently delete all of its backups.</AlertDescription>
+                <AlertDescription>
+                  Deleting an instance will immediately and permanently delete its backups from {purgeRemote && purgeLocal ? 'all' : purgeRemote ? 'remote' : 'local'} storage.
+                </AlertDescription>
               </Alert>
             )}
           </FieldGroup>
@@ -394,7 +410,7 @@ function DangerCard({ data }: { data: Data }) {
         <CardDescription>
           Deleting the workspace stops all its schedules and hides it from every member.{' '}
           {days > 0 ? `A platform admin can restore it for ${days} day${days === 1 ? '' : 's'}; then it's purged.` : 'It is purged immediately.'}{' '}
-          {data.settings.purge_backups ? 'Its backup files will be deleted when purged.' : 'Its backup files stay in your buckets.'}
+          {purgeSummary(data.settings.purge_remote, data.settings.purge_local, 'Its')}
         </CardDescription>
       </CardHeader>
       <CardFooter>
@@ -578,8 +594,8 @@ function ScrubCard({ rules: initial, editable }: { rules: Rule[]; editable: bool
 }
 
 function ApiTokensCard({ api }: { api: NonNullable<Data['api']> }) {
-  const create = useServerFn(createApiToken)
   const revoke = useServerFn(revokeApiToken)
+  const toggle = useServerFn(setApiEnabled)
   const { run, pending } = useAction()
   const [open, setOpen] = useState(false)
   const firstJob = api.jobs[0]?.id ?? '<job-id>'
@@ -598,6 +614,22 @@ function ApiTokensCard({ api }: { api: NonNullable<Data['api']> }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <Field orientation="horizontal" className="rounded-md border p-3">
+          <FieldContent>
+            <FieldLabel htmlFor="api-enabled">Allow API access & GitHub Action</FieldLabel>
+            <FieldDescription>
+              {api.enabled
+                ? 'Tokens below can trigger backups and read status.'
+                : 'Off: every API call is refused, and the GitHub Action skips the backup with a warning (your deploy still runs). Tokens are kept.'}
+            </FieldDescription>
+          </FieldContent>
+          <Switch
+            id="api-enabled"
+            checked={api.enabled}
+            onCheckedChange={(enabled) => run(() => toggle({ data: { enabled } }), { success: enabled ? 'API access enabled' : 'API access disabled' })}
+          />
+        </Field>
+        <div className={api.enabled ? 'space-y-4' : 'pointer-events-none space-y-4 opacity-50'}>
         {api.tokens.length > 0 && (
           <Table>
             <TableHeader>
@@ -633,8 +665,9 @@ function ApiTokensCard({ api }: { api: NonNullable<Data['api']> }) {
           <div className="text-muted-foreground mb-1 text-xs">GitHub Actions step</div>
           <pre className="bg-muted overflow-x-auto rounded-md p-3 text-xs">{snippet}</pre>
         </div>
+        </div>
       </CardContent>
-      <CardFooter><Button onClick={() => setOpen(true)}><Plus /> New token</Button></CardFooter>
+      <CardFooter><Button disabled={!api.enabled} onClick={() => setOpen(true)}><Plus /> New token</Button></CardFooter>
       {open && <NewTokenDialog onClose={() => setOpen(false)} />}
     </Card>
   )

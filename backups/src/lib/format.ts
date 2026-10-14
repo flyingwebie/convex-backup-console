@@ -55,3 +55,11 @@ export function describeRetention(j: { keep_last: number | null; keep_daily: num
   ].filter(Boolean)
   return parts.length ? parts.join(' · ') : 'Keep all'
 }
+
+/** One-line description of the workspace deletion policy for backup files. */
+export function purgeSummary(remote: boolean, local: boolean, subject = 'Their') {
+  if (remote && local) return `${subject} backup files are deleted from remote and local storage when purged.`
+  if (remote) return `${subject} backup files are deleted from remote storage when purged; local copies are kept.`
+  if (local) return `${subject} backup files are deleted from local storage when purged; remote copies are kept.`
+  return `${subject} backup files are kept in remote and local storage.`
+}

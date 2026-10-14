@@ -14,7 +14,7 @@ Plus a production-ready **Convex-on-Coolify** template to run the instances them
 [![Deploy on Coolify](https://img.shields.io/badge/deploy%20on-Coolify-8C52FF?logo=coolify&logoColor=white)](coolify/README.md)
 [![Convex](https://img.shields.io/badge/Convex-self--hosted%20%26%20Cloud-EE342F)](https://convex.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-TanStack%20Start-3178C6?logo=typescript&logoColor=white)](backups)
-[![e2e](https://img.shields.io/badge/e2e-38%20checks-2ea44f)](testing/TESTING.md)
+[![e2e](https://img.shields.io/badge/e2e-39%20checks-2ea44f)](testing/TESTING.md)
 
 [Quick start](#-quick-start) · [Features](#-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Security](#-security) · [FAQ](#-faq)
 
@@ -67,8 +67,8 @@ Convex Backup Console does all of that in a single container.
 - 📈 **Overview & storage dashboard:** health per instance, growth chart, monthly cost estimate.
 - 🔔 **Alerts:** Slack, Discord, Telegram, email, webhook; daily/weekly **digest emails**.
 - 🩺 **Status URL** for Uptime Kuma, Better Stack and UptimeRobot (200 healthy / 503 not).
-- 🚀 **REST API + GitHub Action:** back up right before `npx convex deploy`.
-- 🗑️ **Trash & deletion policy:** restore deleted items for N days; decide whether their backups go too.
+- 🚀 **REST API + GitHub Action:** back up right before `npx convex deploy`, with a per-workspace switch to turn API access off (the Action then skips).
+- 🗑️ **Trash & deletion policy:** restore deleted items for N days, with **separate toggles** for deleting their backup files from **remote** (S3/R2/B2) and **local** storage.
 - 📜 **Audit log** of every action, exportable as CSV.
 
 **Teams**
@@ -209,7 +209,7 @@ backups/                 Convex Backup Console (TanStack Start · Better Auth ·
 coolify/                 Coolify templates (console + Convex instance) and logo
 docker-compose.yaml      Convex-on-Coolify instance template (Postgres + RustFS)
 docs/                    Guides, API reference, images
-testing/                 Local Docker kit, Playwright e2e (38 checks), demo data
+testing/                 Local Docker kit, Playwright e2e (39 checks), demo data
 .github/                 Image build (amd64 + arm64) and the convex-backup GitHub Action
 ```
 

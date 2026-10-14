@@ -18,6 +18,9 @@ export type WorkspaceSettings = {
   stale_hours: number
   trash_days: number
   purge_backups: number
+  purge_remote: number
+  purge_local: number
+  api_enabled: number
   age_recipient: string | null
   age_identity_enc: string | null
   deleted_at: number | null

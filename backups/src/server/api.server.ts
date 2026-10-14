@@ -15,14 +15,16 @@ export async function apiAuth(request: Request, need: 'read' | 'run'): Promise<A
   const prefix = token.split('_')[1]
   const row = db()
     .prepare(
-      `SELECT t.id, t.workspace_id, t.name, t.hash, t.scope, t.expires_at FROM api_tokens t
+      `SELECT t.id, t.workspace_id, t.name, t.hash, t.scope, t.expires_at, s.api_enabled FROM api_tokens t
        JOIN workspace_settings s ON s.workspace_id = t.workspace_id
        WHERE t.prefix = ? AND t.revoked_at IS NULL AND s.deleted_at IS NULL`,
     )
-    .get(prefix) as { id: string; workspace_id: string; name: string; hash: string; scope: 'read' | 'run'; expires_at: number | null } | undefined
+    .get(prefix) as { id: string; workspace_id: string; name: string; hash: string; scope: 'read' | 'run'; expires_at: number | null; api_enabled: number } | undefined
   const hash = createHash('sha256').update(token).digest()
   if (!row || !timingSafeEqual(Buffer.from(row.hash, 'hex'), hash)) return apiError(401, 'Invalid token')
   if (row.expires_at && row.expires_at < Date.now()) return apiError(401, 'Token expired')
+  // Workspace switch (Settings → API tokens) that turns off the REST API and the GitHub Action.
+  if (!row.api_enabled) return apiError(403, 'API access is disabled for this workspace')
   if (need === 'run' && row.scope !== 'run') return apiError(403, 'This token is read-only')
   db().prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').run(Date.now(), row.id)
   return { workspaceId: row.workspace_id, tokenName: row.name, scope: row.scope }

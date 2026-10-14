@@ -110,7 +110,7 @@ function Invite() {
               <Link to="/login" search={{ step: 'password', next: `/invite/${id}` }}>Sign in to accept</Link>
             </Button>
           ) : (
-            <form onSubmit={createAccount}>
+            <form method="post" onSubmit={createAccount}>
               <FieldGroup>
                 {providers.length > 0 && (
                   <>

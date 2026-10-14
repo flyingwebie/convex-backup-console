@@ -59,7 +59,7 @@ function Verify() {
         <CardContent>
           <FieldGroup>
             {user.hasTotp && (
-              <form onSubmit={(e) => { e.preventDefault(); void submit(code) }} className="grid gap-4">
+              <form method="post" onSubmit={(e) => { e.preventDefault(); void submit(code) }} className="grid gap-4">
                 <div className="flex justify-center">
                   <InputOTP maxLength={6} value={code} onChange={setCode} onComplete={submit} autoFocus disabled={busy}>
                     <InputOTPGroup>{Array.from({ length: 6 }, (_, i) => <InputOTPSlot key={i} index={i} />)}</InputOTPGroup>

@@ -5,8 +5,8 @@ import { openDestination, type DestinationRow } from './storage.server'
 import { workspaceSettings } from './workspace.server'
 
 // Deletion policy: deleted workspaces, instances, jobs and destinations sit in the Trash for the
-// workspace's `trash_days`, then are purged. `purge_backups` decides whether the backup files they
-// produced are deleted from the destinations too (default: keep them).
+// workspace's `trash_days`, then are purged. `purge_remote` / `purge_local` decide whether the backup
+// files they produced are deleted from S3-compatible / local-volume destinations too (default: keep).
 
 export type TrashKind = 'instance' | 'job' | 'destination'
 const TABLE: Record<TrashKind, string> = { instance: 'instances', job: 'jobs', destination: 'destinations' }
@@ -49,12 +49,16 @@ export function restoreItem(workspaceId: string, kind: TrashKind, id: string, ac
   audit(workspaceId, actor, `${kind}.restored`, { id })
 }
 
-/** Deletes stored backup files for runs matching `where` (used when purge_backups is on). */
+/** Deletes stored backup files for runs matching `where`, on the storage types the policy allows. */
 async function deleteBackups(workspaceId: string, where: string, param: string) {
+  const { purge_remote, purge_local } = workspaceSettings(workspaceId)
+  const kinds = [purge_remote && "'s3'", purge_local && "'local'"].filter(Boolean)
+  if (!kinds.length) return 0
   const copies = db()
     .prepare(
       `SELECT c.run_id, c.destination_id, c.object_key, c.version_id, c.locked_until FROM run_copies c JOIN runs r ON r.id = c.run_id
-       WHERE ${where} = ? AND c.status = 'ok' AND c.deleted_at IS NULL`,
+       JOIN destinations d ON d.id = c.destination_id
+       WHERE ${where} = ? AND c.status = 'ok' AND c.deleted_at IS NULL AND d.kind IN (${kinds.join(', ')})`,
     )
     .all(param) as { run_id: string; destination_id: string; object_key: string; version_id: string | null; locked_until: number | null }[]
   let deleted = 0
@@ -82,9 +86,8 @@ export async function purgeItem(workspaceId: string, kind: TrashKind, id: string
     | { name: string; deleted_at: number | null }
     | undefined
   if (!row?.deleted_at) throw new Error('Not in the trash')
-  const { purge_backups } = workspaceSettings(workspaceId)
   let backupsDeleted = 0
-  if (purge_backups && kind !== 'destination') {
+  if (kind !== 'destination') {
     backupsDeleted = await deleteBackups(workspaceId, kind === 'job' ? 'r.job_id' : 'r.instance_id', id)
   }
   // Destination files are never touched: once its credentials are gone they can't be, and the
@@ -108,8 +111,7 @@ export function restoreWorkspace(workspaceId: string, actor: string) {
 }
 
 export async function purgeWorkspace(workspaceId: string, actor: string) {
-  const { purge_backups } = workspaceSettings(workspaceId)
-  const backupsDeleted = purge_backups ? await deleteBackups(workspaceId, 'r.workspace_id', workspaceId) : 0
+  const backupsDeleted = await deleteBackups(workspaceId, 'r.workspace_id', workspaceId)
   const name = (db().prepare('SELECT name FROM organization WHERE id = ?').get(workspaceId) as { name: string } | undefined)?.name
   db().transaction(() => {
     for (const t of ['restores', 'runs', 'jobs', 'instances', 'destinations', 'channels', 'audit']) {

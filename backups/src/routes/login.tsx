@@ -86,7 +86,7 @@ function Login() {
         </CardHeader>
         <CardContent>
           {step === 'totp' ? (
-            <form onSubmit={(e) => { e.preventDefault(); void submitCode(code) }}>
+            <form method="post" onSubmit={(e) => { e.preventDefault(); void submitCode(code) }}>
               <FieldGroup>
                 {useBackup ? (
                   <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="xxxxx-xxxxx" autoFocus autoComplete="off" />
@@ -111,7 +111,7 @@ function Login() {
                 <Fingerprint /> Sign in with a passkey
               </Button>
               <OrDivider />
-              <form onSubmit={submitPassword}>
+              <form method="post" onSubmit={submitPassword}>
                 <FieldGroup>
                   <Field>
                     <FieldLabel htmlFor="email">Email</FieldLabel>

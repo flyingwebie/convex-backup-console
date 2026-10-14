@@ -177,6 +177,13 @@ function migrate(conn: Database.Database) {
   add('workspace_settings', 'scrub_rules', 'TEXT')
   add('restores', 'tables', 'TEXT')
   add('restores', 'scrubbed', 'INTEGER NOT NULL DEFAULT 0')
+  // Deletion policy per storage type (replaces the single purge_backups); API/GitHub Action switch.
+  if (!cols('workspace_settings').includes('purge_remote')) {
+    add('workspace_settings', 'purge_remote', 'INTEGER NOT NULL DEFAULT 0')
+    add('workspace_settings', 'purge_local', 'INTEGER NOT NULL DEFAULT 0')
+    conn.exec('UPDATE workspace_settings SET purge_remote = purge_backups, purge_local = purge_backups')
+  }
+  add('workspace_settings', 'api_enabled', 'INTEGER NOT NULL DEFAULT 1')
   conn.exec(`CREATE TABLE IF NOT EXISTS api_tokens (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,

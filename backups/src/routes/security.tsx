@@ -89,7 +89,7 @@ function TotpSetup({ hasPassword }: { hasPassword: boolean }) {
 
   if (!setup) {
     return (
-      <form onSubmit={start}>
+      <form method="post" onSubmit={start}>
         <FieldGroup>
           {hasPassword && (
             <Field>
@@ -104,7 +104,7 @@ function TotpSetup({ hasPassword }: { hasPassword: boolean }) {
     )
   }
   return (
-    <form onSubmit={(e) => { e.preventDefault(); void verify(code) }}>
+    <form method="post" onSubmit={(e) => { e.preventDefault(); void verify(code) }}>
       <FieldGroup>
         <div className="flex flex-col items-center gap-2">
           <img src={setup.qr} alt="Scan with your authenticator app" width={180} height={180} className="rounded-md border bg-white p-1" />
