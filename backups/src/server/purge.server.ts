@@ -1,4 +1,5 @@
 import { audit, db } from './db.server'
+import { sendDueDigests } from './digest.server'
 import { syncSchedules } from './scheduler.server'
 import { openDestination, type DestinationRow } from './storage.server'
 import { workspaceSettings } from './workspace.server'
@@ -52,16 +53,20 @@ export function restoreItem(workspaceId: string, kind: TrashKind, id: string, ac
 async function deleteBackups(workspaceId: string, where: string, param: string) {
   const copies = db()
     .prepare(
-      `SELECT c.run_id, c.destination_id, c.object_key FROM run_copies c JOIN runs r ON r.id = c.run_id
+      `SELECT c.run_id, c.destination_id, c.object_key, c.version_id, c.locked_until FROM run_copies c JOIN runs r ON r.id = c.run_id
        WHERE ${where} = ? AND c.status = 'ok' AND c.deleted_at IS NULL`,
     )
-    .all(param) as { run_id: string; destination_id: string; object_key: string }[]
+    .all(param) as { run_id: string; destination_id: string; object_key: string; version_id: string | null; locked_until: number | null }[]
   let deleted = 0
   for (const c of copies) {
+    if (c.locked_until && c.locked_until > Date.now()) {
+      audit(workspaceId, 'system', 'purge.skipped_locked', { key: c.object_key, lockedUntil: new Date(c.locked_until).toISOString() })
+      continue
+    }
     const dest = db().prepare('SELECT * FROM destinations WHERE id = ?').get(c.destination_id) as DestinationRow | undefined
     if (!dest) continue
     try {
-      await openDestination(dest).delete(c.object_key)
+      await openDestination(dest).delete(c.object_key, c.version_id)
       db().prepare('UPDATE run_copies SET deleted_at = ? WHERE run_id = ? AND destination_id = ?').run(Date.now(), c.run_id, c.destination_id)
       deleted++
     } catch (err) {
@@ -150,5 +155,8 @@ const g = globalThis as { __purgeTimer?: NodeJS.Timeout }
 export function startPurgeLoop() {
   if (g.__purgeTimer) return
   void purgeExpired()
+  void sendDueDigests().catch((err) => console.error('[digest]', err))
+  // Hourly purge; digests are checked every 10 minutes so they arrive close to 08:00.
   g.__purgeTimer = setInterval(() => void purgeExpired(), 60 * 60 * 1000)
+  setInterval(() => void sendDueDigests().catch((err) => console.error('[digest]', err)), 10 * 60 * 1000)
 }

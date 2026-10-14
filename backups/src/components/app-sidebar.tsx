@@ -14,6 +14,7 @@ import {
   Moon,
   Plus,
   ScrollText,
+  PieChart,
   Server,
   Settings2,
   Sun,
@@ -60,6 +61,7 @@ const nav: { label: string; items: Item[] }[] = [
       { to: '/', label: 'Overview', icon: LayoutDashboard },
       { to: '/jobs', label: 'Jobs', icon: CalendarClock },
       { to: '/runs', label: 'Runs & restores', icon: Activity },
+      { to: '/storage', label: 'Storage', icon: PieChart },
     ],
   },
   {

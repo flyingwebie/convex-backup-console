@@ -119,7 +119,7 @@ function Instances() {
           </Card>
         )}
       </PageBody>
-      <InstanceDialog instance={editing} onClose={() => setEditing(null)} />
+      {editing && <InstanceDialog instance={editing} onClose={() => setEditing(null)} />}
     </>
   )
 }

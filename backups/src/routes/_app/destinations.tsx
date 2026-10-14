@@ -1,6 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Cloud, HardDrive, MoreHorizontal, Plus, PlugZap, Trash2 } from 'lucide-react'
+import { Cloud, HardDrive, Lock, MoreHorizontal, Plus, PlugZap, Trash2 } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
+import { Switch } from '~/components/ui/switch'
+import { Field as F2, FieldContent } from '~/components/ui/field'
 import { useState } from 'react'
 import { Confirm } from '~/components/confirm'
 import { PageBody, PageHeader } from '~/components/page'
@@ -68,10 +71,17 @@ function Destinations() {
                     <TableRow key={d.id}>
                       <TableCell className="pl-4 font-medium">{d.name}</TableCell>
                       <TableCell>
-                        <Badge variant="secondary" className="gap-1">
-                          {d.kind === 's3' ? <Cloud className="size-3" /> : <HardDrive className="size-3" />}
-                          {d.kind === 's3' ? 'S3-compatible' : 'Local volume'}
-                        </Badge>
+                        <div className="flex flex-wrap gap-1">
+                          <Badge variant="secondary" className="gap-1">
+                            {d.kind === 's3' ? <Cloud className="size-3" /> : <HardDrive className="size-3" />}
+                            {d.kind === 's3' ? 'S3-compatible' : 'Local volume'}
+                          </Badge>
+                          {d.objectLock && (
+                            <Badge variant="outline" className="gap-1 border-emerald-500/30 text-emerald-700 dark:text-emerald-400">
+                              <Lock className="size-3" /> Locked {d.objectLock.days}d · {d.objectLock.mode.toLowerCase()}
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground font-mono text-xs">{d.summary}</TableCell>
                       <TableCell className="text-sm">{users.length ? users.map((j) => j.name).join(', ') : <span className="text-muted-foreground">—</span>}</TableCell>
@@ -109,7 +119,7 @@ function Destinations() {
           </Card>
         )}
       </PageBody>
-      <DestinationDialog open={open} onClose={() => setOpen(false)} />
+      {open && <DestinationDialog open onClose={() => setOpen(false)} />}
     </>
   )
 }
@@ -119,6 +129,8 @@ function DestinationDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const { run, pending } = useAction()
   const [kind, setKind] = useState<'s3' | 'local'>('s3')
   const [pathStyle, setPathStyle] = useState(false)
+  const [lock, setLock] = useState(false)
+  const [lockMode, setLockMode] = useState<'GOVERNANCE' | 'COMPLIANCE'>('GOVERNANCE')
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -127,13 +139,26 @@ function DestinationDialog({ open, onClose }: { open: boolean; onClose: () => vo
           onSubmit={async (e) => {
             e.preventDefault()
             const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>
+            const price = f.price ? Number(f.price) : null
             const ok = await run(
               () =>
                 add({
                   data:
                     kind === 'local'
-                      ? { kind, name: f.name, root: f.root }
-                      : { kind, name: f.name, endpoint: f.endpoint, region: f.region || 'auto', bucket: f.bucket, prefix: f.prefix, forcePathStyle: pathStyle, accessKeyId: f.accessKeyId, secretAccessKey: f.secretAccessKey },
+                      ? { kind, name: f.name, root: f.root, pricePerGbMonth: price }
+                      : {
+                          kind,
+                          name: f.name,
+                          endpoint: f.endpoint,
+                          region: f.region || 'auto',
+                          bucket: f.bucket,
+                          prefix: f.prefix,
+                          forcePathStyle: pathStyle,
+                          accessKeyId: f.accessKeyId,
+                          secretAccessKey: f.secretAccessKey,
+                          objectLock: lock ? { mode: lockMode, days: Number(f.lockDays) } : null,
+                          pricePerGbMonth: price,
+                        },
                 }),
               { success: 'Destination added — access verified' },
             )
@@ -196,8 +221,41 @@ function DestinationDialog({ open, onClose }: { open: boolean; onClose: () => vo
                   <Checkbox id="pathStyle" checked={pathStyle} onCheckedChange={(v) => setPathStyle(v === true)} />
                   <FieldLabel htmlFor="pathStyle" className="font-normal">Path-style URLs (needed for MinIO / RustFS)</FieldLabel>
                 </Field>
+                <F2 orientation="horizontal" className="rounded-md border p-3">
+                  <FieldContent>
+                    <FieldLabel htmlFor="lock">Object Lock (ransomware protection)</FieldLabel>
+                    <FieldDescription>
+                      Each backup is immutable for N days: nobody — not even someone with these credentials — can delete or overwrite it.
+                      The bucket must have Object Lock enabled at creation (AWS S3, Backblaze B2, Wasabi, MinIO). For R2, use Bucket locks in the Cloudflare dashboard instead.
+                    </FieldDescription>
+                  </FieldContent>
+                  <Switch id="lock" checked={lock} onCheckedChange={setLock} />
+                </F2>
+                {lock && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel>Mode</FieldLabel>
+                      <Select value={lockMode} onValueChange={(v) => setLockMode(v as typeof lockMode)}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="GOVERNANCE">Governance — bucket admins can override</SelectItem>
+                          <SelectItem value="COMPLIANCE">Compliance — nobody can delete early</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="lockDays">Lock for (days)</FieldLabel>
+                      <Input id="lockDays" name="lockDays" type="number" min={1} max={3650} defaultValue={30} required />
+                    </Field>
+                  </div>
+                )}
               </>
             )}
+            <Field>
+              <FieldLabel htmlFor="price">Storage price, $/GB-month <span className="text-muted-foreground font-normal">(optional)</span></FieldLabel>
+              <Input id="price" name="price" type="number" step="0.0001" min={0} className="w-40" placeholder={kind === 'local' ? '0' : 'auto'} />
+              <FieldDescription>For the Storage page's cost estimate. Left empty, it's guessed from the endpoint (R2 $0.015, S3 $0.023, B2 $0.006).</FieldDescription>
+            </Field>
           </FieldGroup>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>

@@ -1,6 +1,9 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Copy, Download, Eye, ImageUp, KeyRound, ShieldAlert, Trash2, TriangleAlert, X } from 'lucide-react'
+import { Activity, Copy, Download, Eye, EyeOff, ImageUp, KeyRound, Mail, Plus, RefreshCw, Send, ShieldAlert, Trash2, TriangleAlert, Webhook, X } from 'lucide-react'
+import { Badge } from '~/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
+import { timeAgo } from '~/lib/format'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { PageBody, PageHeader } from '~/components/page'
@@ -22,17 +25,32 @@ import {
   deleteWorkspace,
   getWorkspace,
   revealEncryptionKey,
+  createApiToken,
+  getApiTokens,
+  getScrubRules,
+  revokeApiToken,
+  saveScrubRules,
+  rotateStatusToken,
+  sendTestDigest,
+  updateDigest,
   updateDeletionPolicy,
   updateWorkspaceDefaults,
   updateWorkspaceGeneral,
 } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/workspace')({
-  loader: () => getWorkspace(),
+  loader: async () => {
+    const ws = await getWorkspace()
+    const canSettings = ['owner', 'admin'].includes(ws.workspace.role)
+    return { ...ws, scrub: await getScrubRules(), api: canSettings ? await getApiTokens() : null }
+  },
   component: WorkspaceSettings,
 })
 
-type Data = Awaited<ReturnType<typeof getWorkspace>>
+type Data = Awaited<ReturnType<typeof getWorkspace>> & {
+  scrub: Awaited<ReturnType<typeof getScrubRules>>
+  api: Awaited<ReturnType<typeof getApiTokens>> | null
+}
 
 function WorkspaceSettings() {
   const data = Route.useLoaderData()
@@ -43,6 +61,9 @@ function WorkspaceSettings() {
       <PageBody>
         <GeneralCard data={data} editable={can('settings')} />
         <DefaultsCard data={data} editable={can('settings')} />
+        <MonitoringCard data={data} editable={can('settings')} />
+        {data.api && <ApiTokensCard api={data.api} />}
+        <ScrubCard rules={data.scrub.rules} editable={can('settings')} />
         <DeletionCard data={data} editable={can('purge')} />
         <EncryptionCard data={data} owner={can('encryptionKey')} />
         {can('deleteWorkspace') && <DangerCard data={data} />}
@@ -401,5 +422,299 @@ function DangerCard({ data }: { data: Data }) {
         </DialogContent>
       </Dialog>
     </Card>
+  )
+}
+
+function MonitoringCard({ data, editable }: { data: Data; editable: boolean }) {
+  const rotate = useServerFn(rotateStatusToken)
+  const saveDigest = useServerFn(updateDigest)
+  const testDigest = useServerFn(sendTestDigest)
+  const { run, pending } = useAction()
+  const s = data.settings
+  const [digest, setDigest] = useState(s.digest)
+  const [recipients, setRecipients] = useState(s.digest_recipients)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Activity className="size-4" /> Monitoring & digests</CardTitle>
+        <CardDescription>Let an uptime monitor watch backup health, and get a regular summary by email.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6 py-2">
+        <FieldGroup>
+          <Field>
+            <FieldLabel>Status URL for uptime monitors</FieldLabel>
+            {s.status_url ? (
+              <div className="flex gap-2">
+                <Input readOnly value={s.status_url} className="font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
+                <Button type="button" variant="outline" size="icon" aria-label="Copy" onClick={() => navigator.clipboard.writeText(s.status_url!).then(() => toast.success('Status URL copied'))}>
+                  <Copy />
+                </Button>
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-sm">Disabled.</p>
+            )}
+            <FieldDescription>
+              Returns <code>200</code> when every instance had a good backup within {s.stale_hours} h, otherwise <code>503</code> with details (JSON).
+              Works with Uptime Kuma, Better Stack, UptimeRobot… Anyone with the URL can see instance names and backup times.
+            </FieldDescription>
+            {editable && (
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" size="sm" disabled={pending} onClick={() => run(() => rotate({ data: { enabled: true } }), { success: s.status_url ? 'New status URL generated' : 'Status URL enabled' })}>
+                  <RefreshCw /> {s.status_url ? 'Regenerate' : 'Enable'}
+                </Button>
+                {s.status_url && (
+                  <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={() => run(() => rotate({ data: { enabled: false } }), { success: 'Status URL disabled' })}>
+                    Disable
+                  </Button>
+                )}
+              </div>
+            )}
+          </Field>
+        </FieldGroup>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            void run(() => saveDigest({ data: { digest, recipients } }), { success: 'Digest settings saved' })
+          }}
+        >
+          <FieldGroup>
+            <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
+              <Field>
+                <FieldLabel>Email digest</FieldLabel>
+                <Select value={digest} onValueChange={(v) => setDigest(v as typeof digest)} disabled={!editable}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="off">Off</SelectItem>
+                    <SelectItem value="daily">Daily at 08:00</SelectItem>
+                    <SelectItem value="weekly">Weekly, Monday 08:00</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="digest-to">Recipients</FieldLabel>
+                <Input id="digest-to" value={recipients} disabled={!editable} onChange={(e) => setRecipients(e.target.value)} placeholder="ops@example.com, client@example.com" />
+              </Field>
+            </div>
+            <FieldDescription>
+              Runs, failures, restores and the health of every instance, in {s.timezone} time.{' '}
+              {!s.smtp && <span className="text-amber-600">Email isn't configured yet — a platform admin can set up SMTP.</span>}
+            </FieldDescription>
+            {editable && (
+              <div className="flex gap-2">
+                <Button type="submit" disabled={pending}><Mail /> Save digest</Button>
+                <Button type="button" variant="outline" disabled={pending || !s.smtp || !s.digest_recipients} onClick={() => run(() => testDigest(), { success: 'Test digest sent' })}>
+                  <Send /> Send test now
+                </Button>
+              </div>
+            )}
+          </FieldGroup>
+        </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+type Rule = { table: string; field: string; method: 'email' | 'name' | 'phone' | 'redact' | 'null' | 'hash' }
+const METHODS: Record<Rule['method'], string> = {
+  email: 'Fake email (user-a1b2…@example.com)',
+  name: 'Fake name (Person 3f9a1c)',
+  phone: 'Fake phone (+1555…)',
+  redact: 'Replace with "[redacted]"',
+  hash: 'Hash (stable, irreversible)',
+  null: 'Set to null',
+}
+const PRESET: Rule[] = [
+  { table: '*', field: 'email', method: 'email' },
+  { table: '*', field: 'name', method: 'name' },
+  { table: '*', field: 'firstName', method: 'name' },
+  { table: '*', field: 'lastName', method: 'name' },
+  { table: '*', field: 'phone', method: 'phone' },
+  { table: '*', field: 'address', method: 'redact' },
+]
+
+function ScrubCard({ rules: initial, editable }: { rules: Rule[]; editable: boolean }) {
+  const save = useServerFn(saveScrubRules)
+  const { run, pending } = useAction()
+  const [rules, setRules] = useState<Rule[]>(initial)
+  const set = (i: number, patch: Partial<Rule>) => setRules((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)))
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><EyeOff className="size-4" /> Data scrubbing</CardTitle>
+        <CardDescription>
+          Rules applied when a restore has "Scrub personal data" on — for safe staging and dev copies of production. Fields use dot paths
+          (<code>profile.phone</code>); table <code>*</code> means every table. Values keep consistent within one restore, so relations still line up.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {rules.length === 0 && <p className="text-muted-foreground text-sm">No rules yet.</p>}
+        {rules.map((r, i) => (
+          <div key={i} className="grid grid-cols-[1fr_1fr_1.4fr_auto] items-center gap-2">
+            <Input value={r.table} disabled={!editable} onChange={(e) => set(i, { table: e.target.value })} placeholder="table or *" className="font-mono text-xs" aria-label="Table" />
+            <Input value={r.field} disabled={!editable} onChange={(e) => set(i, { field: e.target.value })} placeholder="field.path" className="font-mono text-xs" aria-label="Field" />
+            <Select value={r.method} disabled={!editable} onValueChange={(v) => set(i, { method: v as Rule['method'] })}>
+              <SelectTrigger className="w-full" aria-label="Method"><SelectValue /></SelectTrigger>
+              <SelectContent>{Object.entries(METHODS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+            </Select>
+            {editable && <Button size="icon" variant="ghost" aria-label="Remove rule" onClick={() => setRules((x) => x.filter((_, j) => j !== i))}><X /></Button>}
+          </div>
+        ))}
+        <p className="text-muted-foreground text-xs">"Set to null" fails if your schema requires that field — prefer fake values or "[redacted]".</p>
+      </CardContent>
+      {editable && (
+        <CardFooter className="gap-2">
+          <Button onClick={() => run(() => save({ data: { rules: rules.filter((r) => r.table && r.field) } }), { success: 'Scrubbing rules saved' })} disabled={pending}>Save rules</Button>
+          <Button variant="outline" onClick={() => setRules((r) => [...r, { table: '*', field: '', method: 'redact' }])}><Plus /> Add rule</Button>
+          <Button
+            variant="ghost"
+            onClick={() => setRules((r) => [...r, ...PRESET.filter((p) => !r.some((x) => x.table === p.table && x.field === p.field))])}
+          >
+            Add common personal fields
+          </Button>
+        </CardFooter>
+      )}
+    </Card>
+  )
+}
+
+function ApiTokensCard({ api }: { api: NonNullable<Data['api']> }) {
+  const create = useServerFn(createApiToken)
+  const revoke = useServerFn(revokeApiToken)
+  const { run, pending } = useAction()
+  const [open, setOpen] = useState(false)
+  const firstJob = api.jobs[0]?.id ?? '<job-id>'
+  const snippet = `- name: Back up before deploying
+  uses: flyingwebie/convex-selfhost-coolify/.github/actions/convex-backup@main
+  with:
+    console-url: ${api.baseUrl}
+    token: \${{ secrets.BACKUP_CONSOLE_TOKEN }}
+    job-id: ${firstJob}`
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Webhook className="size-4" /> API tokens</CardTitle>
+        <CardDescription>
+          For CI/CD — e.g. back up right before <code>npx convex deploy</code> with the GitHub Action. Tokens act only on this workspace.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {api.tokens.length > 0 && (
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>Name</TableHead><TableHead>Scope</TableHead><TableHead>Last used</TableHead><TableHead>Expires</TableHead><TableHead /></TableRow>
+            </TableHeader>
+            <TableBody>
+              {api.tokens.map((t) => (
+                <TableRow key={t.id}>
+                  <TableCell><div className="font-medium">{t.name}</div><div className="text-muted-foreground font-mono text-xs">cbc_{t.prefix}_…</div></TableCell>
+                  <TableCell><Badge variant={t.scope === 'run' ? 'default' : 'secondary'}>{t.scope === 'run' ? 'Run backups' : 'Read only'}</Badge></TableCell>
+                  <TableCell className="text-sm">{t.last_used_at ? timeAgo(t.last_used_at) : 'never'}</TableCell>
+                  <TableCell className="text-sm">{t.expires_at ? timeAgo(t.expires_at) : 'never'}</TableCell>
+                  <TableCell className="text-right">
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => run(() => revoke({ data: { id: t.id } }), { success: 'Token revoked' })}>Revoke</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {api.jobs.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-muted-foreground text-xs">Job IDs</div>
+            {api.jobs.map((j) => (
+              <div key={j.id} className="flex items-center justify-between gap-2 text-sm">
+                <span>{j.name}</span>
+                <code className="bg-muted rounded px-1.5 text-xs">{j.id}</code>
+              </div>
+            ))}
+          </div>
+        )}
+        <div>
+          <div className="text-muted-foreground mb-1 text-xs">GitHub Actions step</div>
+          <pre className="bg-muted overflow-x-auto rounded-md p-3 text-xs">{snippet}</pre>
+        </div>
+      </CardContent>
+      <CardFooter><Button onClick={() => setOpen(true)}><Plus /> New token</Button></CardFooter>
+      {open && <NewTokenDialog onClose={() => setOpen(false)} />}
+    </Card>
+  )
+}
+
+/** Mounted fresh each time, so scope/expiry/token never leak from a previous token. */
+function NewTokenDialog({ onClose }: { onClose: () => void }) {
+  const create = useServerFn(createApiToken)
+  const { run, pending } = useAction()
+  const [scope, setScope] = useState<'read' | 'run'>('run')
+  const [expiry, setExpiry] = useState('365')
+  const [created, setCreated] = useState<string | null>(null)
+  const setOpen = (o: boolean) => {
+    if (!o) onClose()
+  }
+  return (
+      <Dialog open onOpenChange={setOpen}>
+        <DialogContent>
+          {created ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Copy your token</DialogTitle>
+                <DialogDescription>It won't be shown again. Store it as a CI secret, e.g. BACKUP_CONSOLE_TOKEN.</DialogDescription>
+              </DialogHeader>
+              <pre className="bg-muted my-4 overflow-x-auto rounded-md p-3 font-mono text-xs">{created}</pre>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => navigator.clipboard.writeText(created).then(() => toast.success('Token copied'))}><Copy /> Copy</Button>
+                <Button onClick={() => setOpen(false)}>Done</Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault()
+                const name = String(new FormData(e.currentTarget).get('name'))
+                const r = await run(() => create({ data: { name, scope, expiresInDays: expiry === 'never' ? null : Number(expiry) } }), { success: 'Token created' })
+                if (r) setCreated(r.token)
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle>New API token</DialogTitle>
+                <DialogDescription>Scoped to this workspace.</DialogDescription>
+              </DialogHeader>
+              <FieldGroup className="py-6">
+                <Field>
+                  <FieldLabel htmlFor="tok-name">Name</FieldLabel>
+                  <Input id="tok-name" name="name" placeholder="github-actions-acme" required autoFocus />
+                </Field>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel>Scope</FieldLabel>
+                    <Select value={scope} onValueChange={(v) => setScope(v as 'read' | 'run')}>
+                      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="run">Run backups + read status</SelectItem>
+                        <SelectItem value="read">Read status only</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field>
+                    <FieldLabel>Expires</FieldLabel>
+                    <Select value={expiry} onValueChange={setExpiry}>
+                      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="30">In 30 days</SelectItem>
+                        <SelectItem value="90">In 90 days</SelectItem>
+                        <SelectItem value="365">In 1 year</SelectItem>
+                        <SelectItem value="never">Never</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
+              </FieldGroup>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+                <Button type="submit" disabled={pending}>Create token</Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
   )
 }

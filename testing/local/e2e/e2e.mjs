@@ -35,6 +35,12 @@ async function enrol2fa(p, password, beforeCode) {
 }
 
 const CONTAINER = process.env.CONSOLE_CONTAINER ?? 'cbc-e2e'
+/** Reads one row from the console DB (test-only backdoor). */
+function dbGet(query) {
+  const script = `const d=require('/app/node_modules/better-sqlite3')('/data/console.db');console.log(JSON.stringify(d.prepare(${JSON.stringify(query)}).get() ?? null))`
+  return JSON.parse(execSync(`docker exec -i ${CONTAINER} node -`, { input: script }).toString())
+}
+
 /** Runs SQL inside the console container (test-only backdoor). */
 function sql(query) {
   return execSync(`docker exec -i ${CONTAINER} node -e "const d=require('/app/node_modules/better-sqlite3')('/data/console.db');console.log(JSON.stringify(d.prepare(process.argv[1]).run()))" ${JSON.stringify(query)}`).toString()
@@ -433,6 +439,217 @@ try {
   await shot('22-cloud-restore-warning')
   await dialog().getByRole('button', { name: 'Cancel' }).click()
   ok('Cloud: restoring into a production Cloud deployment shows an extra warning')
+
+  // ══ Strong additions ══
+  const r2 = { endpoint: env('R2_ENDPOINT', 'http://cbc-r2:9000'), key: env('R2_KEY', 'r2key'), secret: env('R2_SECRET', 'r2-secret-key') }
+  const aws = (args) =>
+    execSync(`docker run --rm --network cbc-net -e AWS_ACCESS_KEY_ID=${r2.key} -e AWS_SECRET_ACCESS_KEY=${r2.secret} -e AWS_REGION=us-east-1 amazon/aws-cli:2.36.34 --endpoint-url ${r2.endpoint} ${args} 2>&1 || true`).toString()
+  // Fresh bucket per run: locked objects from earlier runs can't be deleted (by design).
+  const LOCKED = `e2e-locked-${Date.now()}`
+  aws(`s3api create-bucket --bucket ${LOCKED} --object-lock-enabled-for-bucket`)
+  const seed = (cmd, key = env('B_KEY'), url = 'http://localhost:3302') =>
+    execSync(`cd ../seed-app && CONVEX_SELF_HOSTED_URL=${url} CONVEX_SELF_HOSTED_ADMIN_KEY='${key}' npx convex ${cmd}`, { stdio: ['ignore', 'pipe', 'pipe'] }).toString()
+
+  // Object Lock: refused on a bucket without it, accepted on one with it
+  const addLockedDest = async (name, bucket) => {
+    await page.getByRole('link', { name: 'Destinations' }).click()
+    await page.getByRole('button', { name: 'Add destination' }).first().click()
+    await dialog().getByLabel('Name').fill(name)
+    await dialog().getByLabel('Endpoint').fill(r2.endpoint)
+    await dialog().getByLabel('Bucket').fill(bucket)
+    await dialog().getByLabel('Region').fill('us-east-1')
+    await dialog().getByLabel('Access key ID').fill(r2.key)
+    await dialog().getByLabel('Secret access key').fill(r2.secret)
+    await dialog().getByLabel(/Path-style/).check()
+    await dialog().getByRole('switch', { name: /Object Lock/ }).click()
+    await dialog().getByLabel('Lock for (days)').fill('1')
+  }
+  await addLockedDest('not-lockable', env('R2_BUCKET', 'convex-backups-test'))
+  await dialog().getByRole('button', { name: 'Add destination' }).click()
+  await page.getByText(/Object Lock isn't available|Object Lock is not enabled/).waitFor()
+  await dialog().getByRole('button', { name: 'Cancel' }).click()
+  await addLockedDest('immutable', LOCKED)
+  await shot('23-object-lock')
+  await dialog().getByRole('button', { name: 'Add destination' }).click()
+  await page.getByRole('row', { name: /immutable/ }).getByText(/Locked 1d/).waitFor()
+  ok('Object Lock: refused on a bucket without it; enabled destination shows "Locked 1d · governance"')
+
+  // Locked job: keep only 1, run twice → the older copy can't be pruned while locked
+  await page.getByRole('link', { name: 'Jobs' }).click()
+  await page.getByRole('button', { name: 'New job' }).first().click()
+  await dialog().getByLabel('Name').fill('locked-job')
+  await dialog().getByLabel('fake-r2').uncheck()
+  await dialog().getByLabel('immutable').check()
+  await pick(dialog().getByRole('combobox').nth(1), 'Manual only')
+  for (const k of ['Daily', 'Weekly', 'Monthly']) await dialog().getByLabel(k, { exact: true }).fill('')
+  await dialog().getByLabel('Latest', { exact: true }).fill('1')
+  await dialog().getByRole('button', { name: 'Create job' }).click()
+  const runLocked = async () => {
+    await page.getByRole('row', { name: /locked-job/ }).getByRole('button', { name: 'Run', exact: true }).click()
+    await page.getByText(/locked-job started/).waitFor()
+    await page.waitForTimeout(1500)
+    for (let i = 0; i < 40; i++) {
+      if (dbGet("SELECT COUNT(*) AS n FROM runs WHERE status = 'running'").n === 0) break
+      await page.waitForTimeout(2000)
+    }
+  }
+  await runLocked()
+  await page.reload()
+  await runLocked()
+  const lockedObjects = aws(`s3api list-object-versions --bucket ${LOCKED} --query "Versions[].VersionId" --output text`).trim().split(/\s+/).filter(Boolean)
+  if (lockedObjects.length !== 2) throw new Error(`Expected both locked versions to survive retention, found ${lockedObjects.length}`)
+  const keyName = aws(`s3api list-objects-v2 --bucket ${LOCKED} --query "Contents[0].Key" --output text`).trim()
+  const del = aws(`s3api delete-object --bucket ${LOCKED} --key ${keyName} --version-id ${lockedObjects[0]}`)
+  if (!/AccessDenied|retention/i.test(del)) throw new Error(`Locked version was deletable: ${del}`)
+  ok('Object Lock: keep-last-1 left the still-locked older copy alone; deleting it directly is AccessDenied')
+
+  // Contents + compare with the previous backup
+  await page.getByRole('link', { name: 'Runs & restores' }).click()
+  await page.getByRole('button', { name: 'Contents' }).first().click()
+  const sheet = page.getByRole('dialog')
+  await sheet.getByRole('cell', { name: 'notes', exact: true }).waitFor()
+  await sheet.getByText('Changes compared with the backup of').waitFor()
+  const sheetText = await sheet.innerText()
+  if (!/500/.test(sheetText) || !/20\s*\n?\s*files/.test(sheetText)) throw new Error('Manifest numbers missing')
+  await shot('24-contents')
+  await page.keyboard.press('Escape')
+  ok('backup contents: 2 tables, 500 notes, 20 files, compared with the previous backup')
+
+  const latestRestore = () => dbGet('SELECT status, error FROM restores ORDER BY started_at DESC LIMIT 1')
+  const waitForRestore = async () => {
+    await page.waitForTimeout(1000)
+    for (let i = 0; i < 60; i++) {
+      const r = latestRestore()
+      if (r.status === 'ok') return
+      if (r.status === 'failed') throw new Error(`Restore failed: ${r.error}`)
+      await page.waitForTimeout(2000)
+    }
+    throw new Error('Restore did not finish')
+  }
+
+  // Partial restore: B gets extra notes, then only "notes" is restored
+  seed(`run seed:insertNotesPublic '{"from": 1000, "count": 10}'`)
+  const bBefore = JSON.parse(seed('run seed:fingerprint'))
+  if (bBefore.notes !== 510) throw new Error(`Expected 510 notes in B, got ${bBefore.notes}`)
+  await page.getByRole('row', { name: /locked-job/ }).first().getByRole('button', { name: 'Use backup' }).click()
+  await page.getByRole('menuitem', { name: 'Restore…' }).first().click()
+  await pick(dialog().getByRole('combobox').nth(0), 'convex-b')
+  await pick(dialog().getByRole('combobox').nth(2), 'Selected tables only')
+  await dialog().getByRole('checkbox', { name: 'notes' }).or(dialog().locator('label', { hasText: 'notes' }).getByRole('checkbox')).first().check()
+  await dialog().getByLabel(/to confirm/).fill('convex-b')
+  await shot('25-partial-restore')
+  await dialog().getByRole('button', { name: /Restore into convex-b/ }).click()
+  await waitForRestore()
+  const bAfter = JSON.parse(seed('run seed:fingerprint'))
+  if (bAfter.notes !== 500 || bAfter.attachments !== 20) throw new Error(`Partial restore wrong: ${JSON.stringify(bAfter)}`)
+  ok('partial restore: only "notes" replaced in B (510 → 500); attachments untouched')
+
+  // Scrubbing: rule notes.title → redact, full restore with scrub
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Add rule' }).click()
+  const rule = page.locator('[aria-label="Field"]').last()
+  await page.locator('[aria-label="Table"]').last().fill('notes')
+  await rule.fill('title')
+  await page.getByRole('button', { name: 'Save rules' }).click()
+  await page.getByText('Scrubbing rules saved').waitFor()
+  await page.getByRole('link', { name: 'Runs & restores' }).click()
+  await page.getByRole('tab', { name: /Backups/ }).click()
+  await page.getByRole('row', { name: /locked-job/ }).first().getByRole('button', { name: 'Use backup' }).click()
+  await page.getByRole('menuitem', { name: 'Restore…' }).first().click()
+  await pick(dialog().getByRole('combobox').nth(0), 'convex-b')
+  await dialog().getByRole('switch', { name: /Scrub personal data/ }).click()
+  await dialog().getByLabel(/to confirm/).fill('convex-b')
+  await dialog().getByRole('button', { name: /Restore into convex-b/ }).click()
+  await waitForRestore()
+  const sample = seed('data notes --limit 3')
+  if (!sample.includes('[redacted]') || /note \d+/.test(sample)) throw new Error(`Titles not scrubbed:\n${sample}`)
+  await shot('26-restores-scrubbed')
+  ok('scrubbed restore: every note title in B is "[redacted]"')
+
+  // API tokens + REST + the GitHub Action script
+  await page.getByRole('link', { name: 'Settings' }).click()
+  const mkToken = async (name, scopeLabel) => {
+    await page.getByRole('button', { name: 'New token' }).click()
+    await dialog().getByLabel('Name').fill(name)
+    if (scopeLabel) {
+      await pick(dialog().getByRole('combobox').first(), scopeLabel)
+      await dialog().getByRole('combobox').first().filter({ hasText: scopeLabel }).waitFor()
+    }
+    await dialog().getByRole('button', { name: 'Create token' }).click()
+    await dialog().getByText('Copy your token').waitFor()
+    const t = (await dialog().locator('pre').textContent()).trim()
+    await dialog().getByRole('button', { name: 'Done' }).click()
+    await dialog().waitFor({ state: 'detached' })
+    return t
+  }
+  const runToken = await mkToken('ci')
+  const readToken = await mkToken('monitor', 'Read status only')
+  if (readToken === runToken) throw new Error('Got the same token twice')
+  const jobId = dbGet("SELECT id FROM jobs WHERE name = 'locked-job'").id
+  await page.getByText(jobId).first().waitFor() // the card lists job IDs
+  const api = (method, p, token) => fetch(`${URL_}${p}`, { method, headers: { Authorization: `Bearer ${token}` } })
+  if ((await api('POST', `/api/v1/jobs/${jobId}/run`, readToken)).status !== 403) throw new Error('read token could run')
+  if ((await api('GET', '/api/v1/jobs', 'cbc_nope_nope')).status !== 401) throw new Error('bad token accepted')
+  const jobsRes = await (await api('GET', '/api/v1/jobs', readToken)).json()
+  if (!jobsRes.jobs.some((j) => j.id === jobId)) throw new Error('jobs list missing job')
+  // Run the real composite action script
+  const yml = (await import('node:fs')).readFileSync('../../../.github/actions/convex-backup/action.yml', 'utf8')
+  const script = yml.split('run: |')[1].split('\n').map((l) => l.replace(/^ {8}/, '')).join('\n')
+  const outFile = `${shots}gh-output.txt`
+  const { spawnSync } = await import('node:child_process')
+  const action = spawnSync('bash', ['-c', script], {
+    env: { ...process.env, CONSOLE: URL_, TOKEN: runToken, JOB: jobId, TIMEOUT: '5', ALLOW_PARTIAL: 'false', GITHUB_OUTPUT: outFile },
+    encoding: 'utf8',
+  })
+  const actionLog = `${action.stdout}\n${action.stderr}`
+  if (action.status !== 0) throw new Error(`Action exited ${action.status}:\n${actionLog}`)
+  if (!actionLog.includes('✅ Backup completed')) throw new Error(`Action did not succeed:\n${actionLog}`)
+  ok('API tokens: read token can\'t run (403), bad token 401; the GitHub Action ran a backup and waited for "ok"')
+
+  // Status URL, audit CSV, platform SMTP, digest + invitation emails, storage page
+  await page.reload()
+  await page.getByRole('button', { name: 'Enable' }).click()
+  await page.getByText('Status URL enabled').waitFor()
+  const statusUrl = await page.locator('input[readonly]').first().inputValue()
+  const status = await fetch(statusUrl)
+  const health = await status.json()
+  if (![200, 503].includes(status.status) || !Array.isArray(health.instances)) throw new Error('Bad status response')
+  const csv = await page.request.get(`${URL_}/api/audit.csv`)
+  const csvText = await csv.text()
+  if (!csvText.startsWith('time_utc,actor,action,detail') || !csvText.includes('backup.started')) throw new Error('Bad CSV')
+  ok(`status URL → ${status.status} (${health.instances.length} instances); audit CSV export (${csvText.split('\r\n').length - 2} rows)`)
+
+  await page.getByRole('link', { name: 'Workspaces & users' }).click()
+  await page.getByLabel('Host', { exact: true }).fill('cbc-mail')
+  await page.getByLabel('Port', { exact: true }).fill('1025')
+  await page.getByLabel('From', { exact: true }).fill('Backups <backups@example.com>')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await page.getByText('SMTP saved').waitFor()
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await pick(page.getByRole('combobox').filter({ hasText: 'Off' }), 'Daily at 08:00')
+  await page.getByLabel('Recipients').fill('ops@example.com')
+  await page.getByRole('button', { name: 'Save digest' }).click()
+  await page.getByText('Digest settings saved').waitFor()
+  await page.reload()
+  await page.getByRole('button', { name: 'Send test now' }).click()
+  await page.getByText('Test digest sent').waitFor()
+  await page.getByRole('link', { name: 'Members' }).click()
+  await page.getByRole('button', { name: 'Invite member' }).click()
+  await dialog().getByLabel('Email').fill('emailed@example.com')
+  await dialog().getByRole('button', { name: 'Create invitation' }).click()
+  await dialog().getByText(/We emailed/).waitFor()
+  await dialog().getByRole('button', { name: 'Done' }).click()
+  const mails = await (await fetch(`${env('MAILPIT', 'http://localhost:8025')}/api/v1/messages`)).json()
+  const subjects = mails.messages.map((m) => m.Subject)
+  if (!subjects.some((s) => /\[Flying Web\] Backup digest/.test(s))) throw new Error(`No digest email: ${subjects}`)
+  if (!subjects.some((s) => /invited to Flying Web/.test(s))) throw new Error(`No invitation email: ${subjects}`)
+  ok('digest email and invitation email delivered via platform SMTP')
+
+  await page.getByRole('link', { name: 'Storage' }).click()
+  await page.getByText(/Stored data, last \d+ days/).waitFor()
+  await page.locator('.recharts-surface').first().waitFor()
+  await shot('27-storage')
+  ok('storage dashboard renders totals, cost estimate and the 90-day chart')
 
   console.log(`\nAll ${step} checks passed. Screenshots: ${shots}`)
 } catch (err) {

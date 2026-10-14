@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Search } from 'lucide-react'
+import { Download, Search } from 'lucide-react'
+import { Button } from '~/components/ui/button'
 import { useMemo, useState } from 'react'
 import { PageBody, PageHeader } from '~/components/page'
 import { Badge } from '~/components/ui/badge'
@@ -31,7 +32,11 @@ function Audit() {
 
   return (
     <>
-      <PageHeader title="Audit log" description="Every change, backup, restore and download — newest first (last 300 events)." />
+      <PageHeader
+        title="Audit log"
+        description="Every change, backup, restore and download — newest first (last 300 shown)."
+        actions={<Button variant="outline" asChild><a href="/api/audit.csv"><Download /> Export CSV</a></Button>}
+      />
       <PageBody>
         <div className="relative max-w-sm">
           <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />

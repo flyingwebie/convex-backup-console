@@ -1,6 +1,13 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Activity, Download, FileLock2, Lock, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { Activity, Download, EyeOff, FileLock2, ListTree, Lock, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { RunContents } from '~/components/run-contents'
+import { Checkbox } from '~/components/ui/checkbox'
+import { Switch } from '~/components/ui/switch'
+import { FieldContent } from '~/components/ui/field'
+import { getRunContents, getScrubRules } from '~/server/fns'
+import { useServerFn as useFn } from '@tanstack/react-start'
+import { useEffect } from 'react'
 import { useState } from 'react'
 import { z } from 'zod'
 import { PageBody, PageHeader } from '~/components/page'
@@ -45,6 +52,7 @@ function Runs() {
   const search = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
   const [source, setSource] = useState<Source | null>(null)
+  const [contents, setContents] = useState<RunView | null>(null)
   const { can: allowed } = useWorkspace()
   usePolling(data.runs.some((r) => r.status === 'running') || data.restores.some((r) => r.status === 'running'))
   const destName = (id: string) => data.destinations.find((d) => d.id === id)?.name ?? 'Deleted destination'
@@ -86,7 +94,7 @@ function Runs() {
                       <TableHead>Status</TableHead>
                       <TableHead>Size</TableHead>
                       <TableHead>Copies</TableHead>
-                      <TableHead className="w-28" />
+                      <TableHead className="w-52" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -124,12 +132,21 @@ function Runs() {
                                       {destName(c.destination_id)}
                                     </Badge>
                                   </TooltipTrigger>
-                                  <TooltipContent>{c.status === 'failed' ? c.error : c.deleted ? 'Pruned by retention' : c.key}</TooltipContent>
+                                  <TooltipContent>
+                                    {c.status === 'failed' ? c.error : c.deleted ? 'Pruned by retention' : c.key}
+                                    {c.locked_until && c.locked_until > Date.now() && ` · locked until ${formatDate(c.locked_until)}`}
+                                  </TooltipContent>
                                 </Tooltip>
                               ))}
                             </div>
                           </TableCell>
                           <TableCell className="pr-4 text-right">
+                            <div className="flex justify-end gap-1">
+                            {(r.status === 'ok' || r.status === 'partial') && (
+                              <Button size="sm" variant="ghost" onClick={() => setContents(r)} aria-label="Contents">
+                                <ListTree /> Contents
+                              </Button>
+                            )}
                             {available.length > 0 && allowed('download') && (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -158,6 +175,7 @@ function Runs() {
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       )
@@ -172,6 +190,7 @@ function Runs() {
           </TabsContent>
         </Tabs>
       </PageBody>
+      <RunContents run={contents} onClose={() => setContents(null)} />
       {source && <RestoreDialog data={data} source={source} onClose={() => setSource(null)} onDone={() => navigate({ search: (s) => ({ ...s, tab: 'restores' }) })} />}
     </>
   )
@@ -210,7 +229,11 @@ function RestoresTable({ data }: { data: Data }) {
               </TableCell>
               <TableCell className="text-muted-foreground font-mono text-xs whitespace-normal break-all">{r.object_key}</TableCell>
               <TableCell className="font-medium">{r.target_name}</TableCell>
-              <TableCell className="text-sm">{MODES[r.mode as keyof typeof MODES]?.label ?? r.mode}</TableCell>
+              <TableCell className="text-sm">
+                {MODES[r.mode as keyof typeof MODES]?.label ?? r.mode}
+                {r.tables && <div className="text-muted-foreground font-mono text-xs">{(JSON.parse(r.tables) as string[]).join(', ')}</div>}
+                {r.scrubbed ? <Badge variant="outline" className="mt-1 gap-1"><EyeOff className="size-3" /> scrubbed</Badge> : null}
+              </TableCell>
               <TableCell className="max-w-80 whitespace-normal">
                 <StatusBadge status={r.status} />
                 {r.rows_written != null && <span className="text-muted-foreground ml-2 text-xs">{r.rows_written.toLocaleString()} documents</span>}
@@ -236,6 +259,18 @@ function RestoreDialog({ data, source, onClose, onDone }: { data: Data; source: 
   const [targetId, setTargetId] = useState(source.run.instance_id ?? data.instances[0]?.id ?? '')
   const [mode, setMode] = useState<keyof typeof MODES>('replaceAll')
   const [confirm, setConfirm] = useState('')
+  const [scope, setScope] = useState<'all' | 'tables'>('all')
+  const [tables, setTables] = useState<string[]>([])
+  const [includeFiles, setIncludeFiles] = useState(false)
+  const [scrub, setScrub] = useState(false)
+  const [available, setAvailable] = useState<string[] | null>(null)
+  const [ruleCount, setRuleCount] = useState(0)
+  const loadContents = useFn(getRunContents)
+  const loadRules = useFn(getScrubRules)
+  useEffect(() => {
+    void loadContents({ data: { id: source.run.id } }).then((c) => setAvailable(c.manifest?.tables.map((t) => t.name) ?? []))
+    void loadRules().then((r) => setRuleCount(r.rules.length))
+  }, [source.run.id])
   const target = data.instances.find((i) => i.id === targetId)
   const sameInstance = targetId === source.run.instance_id
 
@@ -246,7 +281,18 @@ function RestoreDialog({ data, source, onClose, onDone }: { data: Data; source: 
           onSubmit={async (e) => {
             e.preventDefault()
             const ok = await run(
-              () => restore({ data: { runId: source.run.id, destinationId: source.destinationId, targetInstanceId: targetId, mode, confirm } }),
+              () =>
+                restore({
+                  data: {
+                    runId: source.run.id,
+                    destinationId: source.destinationId,
+                    targetInstanceId: targetId,
+                    mode,
+                    confirm,
+                    ...(scope === 'tables' && { tables, includeFiles }),
+                    scrub,
+                  },
+                }),
               { success: `Restore into ${target?.name} started` },
             )
             if (ok) {
@@ -287,6 +333,47 @@ function RestoreDialog({ data, source, onClose, onDone }: { data: Data; source: 
               </Select>
               <FieldDescription>{MODES[mode].hint}</FieldDescription>
             </Field>
+            <Field>
+              <FieldLabel>What to restore</FieldLabel>
+              <Select value={scope} onValueChange={(v) => setScope(v as 'all' | 'tables')}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Everything (all tables and files)</SelectItem>
+                  <SelectItem value="tables" disabled={!available?.length}>Selected tables only</SelectItem>
+                </SelectContent>
+              </Select>
+              {available && available.length === 0 && (
+                <FieldDescription>Open this backup's Contents and inspect it to restore individual tables.</FieldDescription>
+              )}
+            </Field>
+            {scope === 'tables' && available && (
+              <Field>
+                <FieldLabel>Tables</FieldLabel>
+                <div className="grid max-h-44 grid-cols-2 gap-1 overflow-y-auto rounded-md border p-2">
+                  {available.map((t) => (
+                    <label key={t} className="flex items-center gap-2 text-sm">
+                      <Checkbox checked={tables.includes(t)} onCheckedChange={(v) => setTables((x) => (v ? [...x, t] : x.filter((y) => y !== t)))} />
+                      <span className="truncate font-mono text-xs">{t}</span>
+                    </label>
+                  ))}
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox checked={includeFiles} onCheckedChange={(v) => setIncludeFiles(v === true)} /> Also restore stored files
+                </label>
+                <FieldDescription>Only the selected tables are replaced; every other table in {target?.name} is left as it is.</FieldDescription>
+              </Field>
+            )}
+            <Field orientation="horizontal" className="rounded-md border p-3">
+              <FieldContent>
+                <FieldLabel htmlFor="scrub" className="flex items-center gap-2"><EyeOff className="size-4" /> Scrub personal data</FieldLabel>
+                <FieldDescription>
+                  {ruleCount
+                    ? `Apply the workspace's ${ruleCount} scrubbing rule${ruleCount === 1 ? '' : 's'} (fake emails, names…) before importing — for staging copies.`
+                    : 'No scrubbing rules yet — add them in Workspace settings → Data scrubbing.'}
+                </FieldDescription>
+              </FieldContent>
+              <Switch id="scrub" checked={scrub} disabled={!ruleCount} onCheckedChange={setScrub} />
+            </Field>
             {target?.kind === 'cloud' && target.deployment_type === 'prod' && (
               <Alert variant="destructive">
                 <TriangleAlert />
@@ -315,7 +402,7 @@ function RestoreDialog({ data, source, onClose, onDone }: { data: Data; source: 
           </FieldGroup>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" variant="destructive" disabled={pending || !target || confirm !== target.name}>
+            <Button type="submit" variant="destructive" disabled={pending || !target || confirm !== target.name || (scope === 'tables' && tables.length === 0)}>
               <RotateCcw /> Restore into {target?.name}
             </Button>
           </DialogFooter>

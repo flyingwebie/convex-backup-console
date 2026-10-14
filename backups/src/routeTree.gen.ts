@@ -24,14 +24,21 @@ import { Route as AppMembersRouteImport } from './routes/_app/members'
 import { Route as AppNotificationsRouteImport } from './routes/_app/notifications'
 import { Route as AppPlatformRouteImport } from './routes/_app/platform'
 import { Route as AppRunsRouteImport } from './routes/_app/runs'
+import { Route as AppStorageRouteImport } from './routes/_app/storage'
 import { Route as AppTrashRouteImport } from './routes/_app/trash'
 import { Route as AppWorkspaceRouteImport } from './routes/_app/workspace'
+import { Route as ApiAuditDotcsvRouteImport } from './routes/api/audit[.]csv'
 import { Route as ApiDownloadRouteImport } from './routes/api/download'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as InviteIdRouteImport } from './routes/invite/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiLogoIndexRouteImport } from './routes/api/logo/index'
 import { Route as ApiLogoIdRouteImport } from './routes/api/logo/$id'
+import { Route as ApiStatusTokenRouteImport } from './routes/api/status/$token'
+import { Route as ApiV1StatusRouteImport } from './routes/api/v1/status'
+import { Route as ApiV1JobsIndexRouteImport } from './routes/api/v1/jobs/index'
+import { Route as ApiV1RunsIdRouteImport } from './routes/api/v1/runs/$id'
+import { Route as ApiV1JobsIdRunRouteImport } from './routes/api/v1/jobs/$id/run'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -107,6 +114,11 @@ const AppRunsRoute = AppRunsRouteImport.update({
   path: '/runs',
   getParentRoute: () => AppRoute,
 } as any)
+const AppStorageRoute = AppStorageRouteImport.update({
+  id: '/storage',
+  path: '/storage',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppTrashRoute = AppTrashRouteImport.update({
   id: '/trash',
   path: '/trash',
@@ -116,6 +128,11 @@ const AppWorkspaceRoute = AppWorkspaceRouteImport.update({
   id: '/workspace',
   path: '/workspace',
   getParentRoute: () => AppRoute,
+} as any)
+const ApiAuditDotcsvRoute = ApiAuditDotcsvRouteImport.update({
+  id: '/api/audit.csv',
+  path: '/api/audit.csv',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiDownloadRoute = ApiDownloadRouteImport.update({
   id: '/api/download',
@@ -147,6 +164,31 @@ const ApiLogoIdRoute = ApiLogoIdRouteImport.update({
   path: '/api/logo/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiStatusTokenRoute = ApiStatusTokenRouteImport.update({
+  id: '/api/status/$token',
+  path: '/api/status/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1StatusRoute = ApiV1StatusRouteImport.update({
+  id: '/api/v1/status',
+  path: '/api/v1/status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1JobsIndexRoute = ApiV1JobsIndexRouteImport.update({
+  id: '/api/v1/jobs/',
+  path: '/api/v1/jobs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1RunsIdRoute = ApiV1RunsIdRouteImport.update({
+  id: '/api/v1/runs/$id',
+  path: '/api/v1/runs/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1JobsIdRunRoute = ApiV1JobsIdRunRouteImport.update({
+  id: '/api/v1/jobs/$id/run',
+  path: '/api/v1/jobs/$id/run',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -163,14 +205,21 @@ export interface FileRoutesByFullPath {
   '/notifications': typeof AppNotificationsRoute
   '/platform': typeof AppPlatformRoute
   '/runs': typeof AppRunsRoute
+  '/storage': typeof AppStorageRoute
   '/trash': typeof AppTrashRoute
   '/workspace': typeof AppWorkspaceRoute
+  '/api/audit.csv': typeof ApiAuditDotcsvRoute
   '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
   '/invite/$id': typeof InviteIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/logo/$id': typeof ApiLogoIdRoute
+  '/api/status/$token': typeof ApiStatusTokenRoute
+  '/api/v1/status': typeof ApiV1StatusRoute
   '/api/logo/': typeof ApiLogoIndexRoute
+  '/api/v1/runs/$id': typeof ApiV1RunsIdRoute
+  '/api/v1/jobs/': typeof ApiV1JobsIndexRoute
+  '/api/v1/jobs/$id/run': typeof ApiV1JobsIdRunRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -186,15 +235,22 @@ export interface FileRoutesByTo {
   '/notifications': typeof AppNotificationsRoute
   '/platform': typeof AppPlatformRoute
   '/runs': typeof AppRunsRoute
+  '/storage': typeof AppStorageRoute
   '/trash': typeof AppTrashRoute
   '/workspace': typeof AppWorkspaceRoute
+  '/api/audit.csv': typeof ApiAuditDotcsvRoute
   '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
   '/invite/$id': typeof InviteIdRoute
   '/': typeof AppIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/logo/$id': typeof ApiLogoIdRoute
+  '/api/status/$token': typeof ApiStatusTokenRoute
+  '/api/v1/status': typeof ApiV1StatusRoute
   '/api/logo': typeof ApiLogoIndexRoute
+  '/api/v1/runs/$id': typeof ApiV1RunsIdRoute
+  '/api/v1/jobs': typeof ApiV1JobsIndexRoute
+  '/api/v1/jobs/$id/run': typeof ApiV1JobsIdRunRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -212,15 +268,22 @@ export interface FileRoutesById {
   '/_app/notifications': typeof AppNotificationsRoute
   '/_app/platform': typeof AppPlatformRoute
   '/_app/runs': typeof AppRunsRoute
+  '/_app/storage': typeof AppStorageRoute
   '/_app/trash': typeof AppTrashRoute
   '/_app/workspace': typeof AppWorkspaceRoute
+  '/api/audit.csv': typeof ApiAuditDotcsvRoute
   '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
   '/invite/$id': typeof InviteIdRoute
   '/_app/': typeof AppIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/logo/$id': typeof ApiLogoIdRoute
+  '/api/status/$token': typeof ApiStatusTokenRoute
+  '/api/v1/status': typeof ApiV1StatusRoute
   '/api/logo/': typeof ApiLogoIndexRoute
+  '/api/v1/runs/$id': typeof ApiV1RunsIdRoute
+  '/api/v1/jobs/': typeof ApiV1JobsIndexRoute
+  '/api/v1/jobs/$id/run': typeof ApiV1JobsIdRunRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -239,14 +302,21 @@ export interface FileRouteTypes {
     | '/notifications'
     | '/platform'
     | '/runs'
+    | '/storage'
     | '/trash'
     | '/workspace'
+    | '/api/audit.csv'
     | '/api/download'
     | '/api/health'
     | '/invite/$id'
     | '/api/auth/$'
     | '/api/logo/$id'
+    | '/api/status/$token'
+    | '/api/v1/status'
     | '/api/logo/'
+    | '/api/v1/runs/$id'
+    | '/api/v1/jobs/'
+    | '/api/v1/jobs/$id/run'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -262,15 +332,22 @@ export interface FileRouteTypes {
     | '/notifications'
     | '/platform'
     | '/runs'
+    | '/storage'
     | '/trash'
     | '/workspace'
+    | '/api/audit.csv'
     | '/api/download'
     | '/api/health'
     | '/invite/$id'
     | '/'
     | '/api/auth/$'
     | '/api/logo/$id'
+    | '/api/status/$token'
+    | '/api/v1/status'
     | '/api/logo'
+    | '/api/v1/runs/$id'
+    | '/api/v1/jobs'
+    | '/api/v1/jobs/$id/run'
   id:
     | '__root__'
     | '/_app'
@@ -287,15 +364,22 @@ export interface FileRouteTypes {
     | '/_app/notifications'
     | '/_app/platform'
     | '/_app/runs'
+    | '/_app/storage'
     | '/_app/trash'
     | '/_app/workspace'
+    | '/api/audit.csv'
     | '/api/download'
     | '/api/health'
     | '/invite/$id'
     | '/_app/'
     | '/api/auth/$'
     | '/api/logo/$id'
+    | '/api/status/$token'
+    | '/api/v1/status'
     | '/api/logo/'
+    | '/api/v1/runs/$id'
+    | '/api/v1/jobs/'
+    | '/api/v1/jobs/$id/run'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -304,12 +388,18 @@ export interface RootRouteChildren {
   NoWorkspaceRoute: typeof NoWorkspaceRoute
   SecurityRoute: typeof SecurityRoute
   VerifyRoute: typeof VerifyRoute
+  ApiAuditDotcsvRoute: typeof ApiAuditDotcsvRoute
   ApiDownloadRoute: typeof ApiDownloadRoute
   ApiHealthRoute: typeof ApiHealthRoute
   InviteIdRoute: typeof InviteIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiLogoIdRoute: typeof ApiLogoIdRoute
+  ApiStatusTokenRoute: typeof ApiStatusTokenRoute
+  ApiV1StatusRoute: typeof ApiV1StatusRoute
   ApiLogoIndexRoute: typeof ApiLogoIndexRoute
+  ApiV1RunsIdRoute: typeof ApiV1RunsIdRoute
+  ApiV1JobsIndexRoute: typeof ApiV1JobsIndexRoute
+  ApiV1JobsIdRunRoute: typeof ApiV1JobsIdRunRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -419,6 +509,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRunsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/storage': {
+      id: '/_app/storage'
+      path: '/storage'
+      fullPath: '/storage'
+      preLoaderRoute: typeof AppStorageRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/trash': {
       id: '/_app/trash'
       path: '/trash'
@@ -432,6 +529,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/workspace'
       preLoaderRoute: typeof AppWorkspaceRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/api/audit.csv': {
+      id: '/api/audit.csv'
+      path: '/api/audit.csv'
+      fullPath: '/api/audit.csv'
+      preLoaderRoute: typeof ApiAuditDotcsvRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/download': {
       id: '/api/download'
@@ -475,6 +579,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiLogoIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/status/$token': {
+      id: '/api/status/$token'
+      path: '/api/status/$token'
+      fullPath: '/api/status/$token'
+      preLoaderRoute: typeof ApiStatusTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/status': {
+      id: '/api/v1/status'
+      path: '/api/v1/status'
+      fullPath: '/api/v1/status'
+      preLoaderRoute: typeof ApiV1StatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/jobs/': {
+      id: '/api/v1/jobs/'
+      path: '/api/v1/jobs'
+      fullPath: '/api/v1/jobs/'
+      preLoaderRoute: typeof ApiV1JobsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/runs/$id': {
+      id: '/api/v1/runs/$id'
+      path: '/api/v1/runs/$id'
+      fullPath: '/api/v1/runs/$id'
+      preLoaderRoute: typeof ApiV1RunsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/jobs/$id/run': {
+      id: '/api/v1/jobs/$id/run'
+      path: '/api/v1/jobs/$id/run'
+      fullPath: '/api/v1/jobs/$id/run'
+      preLoaderRoute: typeof ApiV1JobsIdRunRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -488,6 +627,7 @@ interface AppRouteChildren {
   AppNotificationsRoute: typeof AppNotificationsRoute
   AppPlatformRoute: typeof AppPlatformRoute
   AppRunsRoute: typeof AppRunsRoute
+  AppStorageRoute: typeof AppStorageRoute
   AppTrashRoute: typeof AppTrashRoute
   AppWorkspaceRoute: typeof AppWorkspaceRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -503,6 +643,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppNotificationsRoute: AppNotificationsRoute,
   AppPlatformRoute: AppPlatformRoute,
   AppRunsRoute: AppRunsRoute,
+  AppStorageRoute: AppStorageRoute,
   AppTrashRoute: AppTrashRoute,
   AppWorkspaceRoute: AppWorkspaceRoute,
   AppIndexRoute: AppIndexRoute,
@@ -516,12 +657,18 @@ const rootRouteChildren: RootRouteChildren = {
   NoWorkspaceRoute: NoWorkspaceRoute,
   SecurityRoute: SecurityRoute,
   VerifyRoute: VerifyRoute,
+  ApiAuditDotcsvRoute: ApiAuditDotcsvRoute,
   ApiDownloadRoute: ApiDownloadRoute,
   ApiHealthRoute: ApiHealthRoute,
   InviteIdRoute: InviteIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiLogoIdRoute: ApiLogoIdRoute,
+  ApiStatusTokenRoute: ApiStatusTokenRoute,
+  ApiV1StatusRoute: ApiV1StatusRoute,
   ApiLogoIndexRoute: ApiLogoIndexRoute,
+  ApiV1RunsIdRoute: ApiV1RunsIdRoute,
+  ApiV1JobsIndexRoute: ApiV1JobsIndexRoute,
+  ApiV1JobsIdRunRoute: ApiV1JobsIdRunRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

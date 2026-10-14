@@ -9,9 +9,17 @@ import { ensureBooted } from './boot.server'
 import { ConvexAdmin, parseDeployKey, resolveCloudUrl } from './convex.server'
 import { decrypt, encrypt } from './crypto.server'
 import { audit, db } from './db.server'
+import { env } from './env.server'
 import { createEncryptionKey, encryptionIdentity, encryptionRecipient } from './encryption.server'
 import { getSmtp, invitationUrl, saveSmtp, sendMail } from './mail.server'
 import { send, type ChannelConfig } from './notify.server'
+import { sendDigest } from './digest.server'
+import { createHash, randomBytes } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
+import { decryptStream } from './encryption.server'
+import { inspectZip, type Manifest, type ScrubRule } from './zip.server'
 import { purgeItem, purgeWorkspace, restoreItem, restoreWorkspace, softDelete, softDeleteWorkspace } from './purge.server'
 import { isRestoring, startRestore } from './restore.server'
 import { nextRun, syncSchedules } from './scheduler.server'
@@ -117,13 +125,13 @@ export const createWorkspace = createServerFn({ method: 'POST' })
 
 // ── Shared row shapes ────────────────────────────────────────
 
-type CopyRow = { destination_id: string; status: string; error: string | null; key: string; deleted: number }
+type CopyRow = { destination_id: string; status: string; error: string | null; key: string; deleted: number; locked_until: number | null }
 
 function listRuns(ws: string, limit: number, jobId?: string) {
   const rows = db()
     .prepare(
       `SELECT r.*, j.name AS job_name, i.name AS instance_name,
-         (SELECT json_group_array(json_object('destination_id', c.destination_id, 'status', c.status, 'error', c.error, 'key', c.object_key, 'deleted', c.deleted_at IS NOT NULL))
+         (SELECT json_group_array(json_object('destination_id', c.destination_id, 'status', c.status, 'error', c.error, 'key', c.object_key, 'deleted', c.deleted_at IS NOT NULL, 'locked_until', c.locked_until))
           FROM run_copies c WHERE c.run_id = r.id) AS copies
        FROM runs r LEFT JOIN jobs j ON j.id = r.job_id LEFT JOIN instances i ON i.id = r.instance_id
        WHERE r.workspace_id = ? ${jobId ? 'AND r.job_id = ?' : ''}
@@ -142,6 +150,8 @@ function listRuns(ws: string, limit: number, jobId?: string) {
     finished_at: r.finished_at == null ? null : Number(r.finished_at),
     bytes: r.bytes == null ? null : Number(r.bytes),
     encrypted: Boolean(r.encrypted),
+    has_manifest: r.manifest != null,
+    sha256: (r.sha256 as string | null) ?? null,
     error: (r.error as string | null) ?? null,
     copies: (JSON.parse(String(r.copies)) as CopyRow[]).map((c) => ({ ...c, deleted: Boolean(c.deleted) })),
   }))
@@ -172,15 +182,28 @@ function listInstances(ws: string) {
   })
 }
 
+/** $/GB-month for the cost estimate: explicit setting, else a guess from the endpoint (list prices, Oct 2026). */
+function priceFor(kind: string, cfg: { pricePerGbMonth?: number; endpoint?: string }) {
+  if (cfg.pricePerGbMonth != null) return cfg.pricePerGbMonth
+  if (kind === 'local') return 0
+  const e = cfg.endpoint ?? ''
+  if (e.includes('r2.cloudflarestorage.com')) return 0.015
+  if (e.includes('backblazeb2.com')) return 0.006
+  if (e.includes('wasabisys.com')) return 0.0069
+  if (!e) return 0.023 // AWS S3 Standard
+  return 0
+}
+
 function describeDestination(d: DestinationRow) {
   const cfg = JSON.parse(d.config) as Record<string, string | boolean | undefined>
   return d.kind === 'local' ? String(cfg.root) : `${cfg.endpoint || 'AWS S3'} · ${cfg.bucket}${cfg.prefix ? '/' + cfg.prefix : ''}`
 }
 
 function listDestinations(ws: string) {
-  return (db().prepare('SELECT * FROM destinations WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY name').all(ws) as DestinationRow[]).map(
-    (d) => ({ id: d.id, name: d.name, kind: d.kind, summary: describeDestination(d) }),
-  )
+  return (db().prepare('SELECT * FROM destinations WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY name').all(ws) as DestinationRow[]).map((d) => {
+    const cfg = JSON.parse(d.config) as { objectLock?: { mode: string; days: number }; pricePerGbMonth?: number; endpoint?: string }
+    return { id: d.id, name: d.name, kind: d.kind, summary: describeDestination(d), objectLock: cfg.objectLock ?? null, price: priceFor(d.kind, cfg) }
+  })
 }
 
 function listJobs(ws: string) {
@@ -220,10 +243,12 @@ export type JobView = ReturnType<typeof listJobs>[number]
 function listRestores(ws: string, limit: number) {
   return db()
     .prepare(
-      `SELECT id, run_id, object_key, target_name, mode, actor, status, confirm_message, rows_written, error, started_at, finished_at
+      `SELECT id, run_id, object_key, target_name, mode, actor, status, confirm_message, rows_written, error, started_at, finished_at, tables, scrubbed
        FROM restores WHERE workspace_id = ? ORDER BY started_at DESC LIMIT ${Number(limit)}`,
     )
     .all(ws) as {
+    tables: string | null
+    scrubbed: number
     id: string
     run_id: string
     object_key: string
@@ -439,11 +464,14 @@ const destinationInput = z.discriminatedUnion('kind', [
     forcePathStyle: z.boolean().default(false),
     accessKeyId: z.string().trim().min(1),
     secretAccessKey: z.string().trim().min(1),
+    objectLock: z.object({ mode: z.enum(['GOVERNANCE', 'COMPLIANCE']), days: z.number().int().min(1).max(3650) }).nullable().default(null),
+    pricePerGbMonth: z.number().min(0).max(10).nullable().default(null),
   }),
   z.object({
     kind: z.literal('local'),
     name: z.string().trim().min(1).max(80),
     root: z.string().trim().startsWith('/'),
+    pricePerGbMonth: z.number().min(0).max(10).nullable().default(null),
   }),
 ])
 
@@ -465,10 +493,12 @@ export const addDestination = createServerFn({ method: 'POST' })
               prefix: data.prefix || undefined,
               forcePathStyle: data.forcePathStyle,
               accessKeyId: data.accessKeyId,
+              objectLock: data.objectLock ?? undefined,
+              pricePerGbMonth: data.pricePerGbMonth ?? undefined,
             }),
             secret_enc: encrypt(data.secretAccessKey),
           }
-        : { id, name: data.name, kind: 'local', config: JSON.stringify({ root: data.root }), secret_enc: null }
+        : { id, name: data.name, kind: 'local', config: JSON.stringify({ root: data.root, pricePerGbMonth: data.pricePerGbMonth ?? undefined }), secret_enc: null }
     await openDestination(row).test()
     try {
       db()
@@ -614,6 +644,9 @@ export const restoreBackup = createServerFn({ method: 'POST' })
         targetInstanceId: z.string(),
         mode: z.enum(['replaceAll', 'replace', 'append', 'requireEmpty']),
         confirm: z.string(),
+        tables: z.array(z.string()).optional(),
+        includeFiles: z.boolean().optional(),
+        scrub: z.boolean().optional(),
       }),
     ),
   )
@@ -749,6 +782,10 @@ export const getWorkspace = createServerFn({ method: 'GET' }).handler(async () =
       trash_days: s.trash_days,
       purge_backups: Boolean(s.purge_backups),
       recipient: s.age_recipient,
+      status_url: s.status_token ? `${env.publicUrl}/api/status/${s.status_token}` : null,
+      digest: s.digest,
+      digest_recipients: s.digest_recipients ?? '',
+      smtp: Boolean(getSmtp()),
     },
     timezones: ['UTC', ...TIMEZONES.filter((t) => t !== 'UTC')],
   }
@@ -806,6 +843,38 @@ export const updateDeletionPolicy = createServerFn({ method: 'POST' })
     db().prepare('UPDATE workspace_settings SET trash_days = ?, purge_backups = ? WHERE workspace_id = ?').run(data.trashDays, data.purgeBackups ? 1 : 0, ws.id)
     audit(ws.id, user.email, 'workspace.deletion_policy_updated', data)
   })
+
+export const rotateStatusToken = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ enabled: z.boolean() })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('settings')
+    const token = data.enabled ? randomBytes(24).toString('base64url') : null
+    db().prepare('UPDATE workspace_settings SET status_token = ? WHERE workspace_id = ?').run(token, ws.id)
+    audit(ws.id, user.email, data.enabled ? 'workspace.status_url_rotated' : 'workspace.status_url_disabled')
+  })
+
+export const updateDigest = createServerFn({ method: 'POST' })
+  .validator(
+    parse(
+      z.object({
+        digest: z.enum(['off', 'daily', 'weekly']),
+        recipients: z.string().trim().max(1000).refine((v) => v.split(/[,\s]+/).filter(Boolean).every((e) => z.email().safeParse(e).success), 'Enter valid email addresses'),
+      }),
+    ),
+  )
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('settings')
+    db()
+      .prepare('UPDATE workspace_settings SET digest = ?, digest_recipients = ?, digest_last_sent = NULL WHERE workspace_id = ?')
+      .run(data.digest, data.recipients || null, ws.id)
+    audit(ws.id, user.email, 'workspace.digest_updated', data)
+  })
+
+export const sendTestDigest = createServerFn({ method: 'POST' }).handler(async () => {
+  const { ws, user } = await requireWorkspace('settings')
+  await sendDigest(ws.id, Date.now() - 7 * 86_400_000)
+  audit(ws.id, user.email, 'workspace.digest_test_sent')
+})
 
 export const createEncryption = createServerFn({ method: 'POST' }).handler(async () => {
   const { ws, user } = await requireWorkspace('encryptionKey')
@@ -1050,4 +1119,163 @@ export const purgeWorkspaceNow = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const ctx = await requirePlatformAdmin()
     await purgeWorkspace(data.id, ctx.user.email)
+  })
+
+// ── Backup contents ──────────────────────────────────────────
+
+function runManifest(ws: string, runId: string) {
+  const row = db().prepare('SELECT manifest, instance_id, started_at FROM runs WHERE id = ? AND workspace_id = ?').get(runId, ws) as
+    | { manifest: string | null; instance_id: string | null; started_at: number }
+    | undefined
+  if (!row) throw new Error('Run not found')
+  return row
+}
+
+/** A backup's manifest, compared with the previous backup of the same instance that has one. */
+export const getRunContents = createServerFn({ method: 'GET' })
+  .validator(parse(byId))
+  .handler(async ({ data }) => {
+    const { ws } = await requireWorkspace('view')
+    const row = runManifest(ws.id, data.id)
+    const previous = db()
+      .prepare(
+        `SELECT id, started_at, manifest FROM runs WHERE workspace_id = ? AND instance_id = ? AND started_at < ?
+         AND manifest IS NOT NULL AND status IN ('ok', 'partial') ORDER BY started_at DESC LIMIT 1`,
+      )
+      .get(ws.id, row.instance_id, row.started_at) as { id: string; started_at: number; manifest: string } | undefined
+    return {
+      manifest: row.manifest ? (JSON.parse(row.manifest) as Manifest) : null,
+      previous: previous ? { id: previous.id, started_at: previous.started_at, manifest: JSON.parse(previous.manifest) as Manifest } : null,
+    }
+  })
+
+/** Builds the manifest for an older backup by downloading (and decrypting) one stored copy. */
+export const inspectRun = createServerFn({ method: 'POST' })
+  .validator(parse(byId))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('download')
+    runManifest(ws.id, data.id)
+    const copy = db()
+      .prepare("SELECT c.object_key, d.* FROM run_copies c JOIN destinations d ON d.id = c.destination_id WHERE c.run_id = ? AND c.status = 'ok' AND c.deleted_at IS NULL LIMIT 1")
+      .get(data.id) as (DestinationRow & { object_key: string }) | undefined
+    if (!copy) throw new Error('No stored copy left to inspect')
+    const tmp = path.join(env.dataDir, 'tmp', `inspect-${data.id}.zip`)
+    await fs.promises.mkdir(path.dirname(tmp), { recursive: true })
+    try {
+      const src = await openDestination(copy).get(copy.object_key)
+      await pipeline(copy.object_key.endsWith('.age') ? await decryptStream(ws.id, src) : src, fs.createWriteStream(tmp))
+      const manifest = await inspectZip(tmp)
+      db().prepare('UPDATE runs SET manifest = ? WHERE id = ?').run(JSON.stringify(manifest), data.id)
+      audit(ws.id, user.email, 'backup.inspected', { runId: data.id })
+    } finally {
+      await fs.promises.rm(tmp, { force: true })
+    }
+  })
+
+// ── Scrubbing rules ──────────────────────────────────────────
+
+const scrubRule = z.object({
+  table: z.string().trim().min(1).max(120),
+  field: z.string().trim().min(1).max(200),
+  method: z.enum(['email', 'name', 'phone', 'redact', 'null', 'hash']),
+})
+
+export const getScrubRules = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  return { rules: JSON.parse(workspaceSettings(ws.id).scrub_rules ?? '[]') as ScrubRule[] }
+})
+
+export const saveScrubRules = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ rules: z.array(scrubRule).max(200) })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('settings')
+    db().prepare('UPDATE workspace_settings SET scrub_rules = ? WHERE workspace_id = ?').run(JSON.stringify(data.rules), ws.id)
+    audit(ws.id, user.email, 'workspace.scrub_rules_updated', { count: data.rules.length })
+  })
+
+// ── Storage dashboard ────────────────────────────────────────
+
+export const getStorage = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  const destinations = listDestinations(ws.id)
+  const copies = db()
+    .prepare(
+      `SELECT c.destination_id, c.created_at, c.deleted_at, r.bytes, r.instance_id, i.name AS instance_name FROM (
+         SELECT rc.*, r2.started_at AS created_at FROM run_copies rc JOIN runs r2 ON r2.id = rc.run_id
+       ) c JOIN runs r ON r.id = c.run_id LEFT JOIN instances i ON i.id = r.instance_id
+       WHERE r.workspace_id = ? AND c.status = 'ok' AND r.bytes IS NOT NULL`,
+    )
+    .all(ws.id) as { destination_id: string; created_at: number; deleted_at: number | null; bytes: number; instance_id: string | null; instance_name: string | null }[]
+  const live = copies.filter((c) => !c.deleted_at)
+  const perDestination = destinations.map((d) => {
+    const mine = live.filter((c) => c.destination_id === d.id)
+    const bytes = mine.reduce((a, c) => a + c.bytes, 0)
+    return { ...d, bytes, objects: mine.length, monthly: (bytes / 1024 ** 3) * d.price }
+  })
+  const byInstance = new Map<string, { name: string; bytes: number; objects: number; latest: number }>()
+  for (const c of live) {
+    const k = c.instance_id ?? 'deleted'
+    const e = byInstance.get(k) ?? { name: c.instance_name ?? 'Deleted instance', bytes: 0, objects: 0, latest: 0 }
+    e.bytes += c.bytes
+    e.objects++
+    e.latest = Math.max(e.latest, c.created_at)
+    byInstance.set(k, e)
+  }
+  // Stored bytes per destination at the end of each of the last 90 days.
+  const DAY = 86_400_000
+  const end = new Date()
+  end.setUTCHours(23, 59, 59, 999)
+  // Window: from the first backup (at least 14 days, at most 90).
+  const firstCopy = copies.reduce((a, c) => Math.min(a, c.created_at), Date.now())
+  const days = Math.min(90, Math.max(14, Math.ceil((end.getTime() - firstCopy) / DAY) + 1))
+  const series = Array.from({ length: days }, (_, i) => {
+    const t = end.getTime() - (days - 1 - i) * DAY
+    const point: Record<string, number | string> = { date: new Date(t).toISOString().slice(0, 10) }
+    for (const d of destinations) {
+      point[d.id] = copies.filter((c) => c.destination_id === d.id && c.created_at <= t && (!c.deleted_at || c.deleted_at > t)).reduce((a, c) => a + c.bytes, 0)
+    }
+    return point
+  })
+  return {
+    destinations: perDestination,
+    instances: [...byInstance.values()].sort((a, b) => b.bytes - a.bytes),
+    series,
+    days,
+    totals: { bytes: perDestination.reduce((a, d) => a + d.bytes, 0), monthly: perDestination.reduce((a, d) => a + d.monthly, 0) },
+  }
+})
+
+// ── API tokens ───────────────────────────────────────────────
+
+export const getApiTokens = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('settings')
+  return {
+    tokens: db()
+      .prepare('SELECT id, name, prefix, scope, created_by, created_at, expires_at, last_used_at FROM api_tokens WHERE workspace_id = ? AND revoked_at IS NULL ORDER BY created_at DESC')
+      .all(ws.id) as { id: string; name: string; prefix: string; scope: 'read' | 'run'; created_by: string; created_at: number; expires_at: number | null; last_used_at: number | null }[],
+    jobs: listJobs(ws.id).map((j) => ({ id: j.id, name: j.name })),
+    baseUrl: env.publicUrl,
+  }
+})
+
+export const createApiToken = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ name: z.string().trim().min(1).max(80), scope: z.enum(['read', 'run']), expiresInDays: z.number().int().min(1).max(3650).nullable() })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('settings')
+    const prefix = randomBytes(6).toString('base64url')
+    const secret = randomBytes(24).toString('base64url')
+    const token = `cbc_${prefix}_${secret}`
+    db()
+      .prepare('INSERT INTO api_tokens (id, workspace_id, name, prefix, hash, scope, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(randomUUID(), ws.id, data.name, prefix, createHash('sha256').update(token).digest('hex'), data.scope, user.email, Date.now(), data.expiresInDays ? Date.now() + data.expiresInDays * 86_400_000 : null)
+    audit(ws.id, user.email, 'api_token.created', { name: data.name, scope: data.scope, prefix })
+    return { token }
+  })
+
+export const revokeApiToken = createServerFn({ method: 'POST' })
+  .validator(parse(byId))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('settings')
+    db().prepare('UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND workspace_id = ?').run(Date.now(), data.id, ws.id)
+    audit(ws.id, user.email, 'api_token.revoked', { id: data.id })
   })

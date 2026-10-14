@@ -164,6 +164,32 @@ function migrate(conn: Database.Database) {
   add('instances', 'kind', "TEXT NOT NULL DEFAULT 'self_hosted'")
   add('instances', 'deployment_name', 'TEXT')
   add('instances', 'deployment_type', 'TEXT')
+  // Monitoring & digests
+  add('workspace_settings', 'status_token', 'TEXT')
+  add('workspace_settings', 'digest', "TEXT NOT NULL DEFAULT 'off'")
+  add('workspace_settings', 'digest_recipients', 'TEXT')
+  add('workspace_settings', 'digest_last_sent', 'INTEGER')
+  // Object Lock + manifests + scrubbing
+  add('run_copies', 'version_id', 'TEXT')
+  add('run_copies', 'locked_until', 'INTEGER')
+  add('runs', 'manifest', 'TEXT')
+  add('runs', 'sha256', 'TEXT')
+  add('workspace_settings', 'scrub_rules', 'TEXT')
+  add('restores', 'tables', 'TEXT')
+  add('restores', 'scrubbed', 'INTEGER NOT NULL DEFAULT 0')
+  conn.exec(`CREATE TABLE IF NOT EXISTS api_tokens (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    prefix TEXT NOT NULL UNIQUE,
+    hash TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('read', 'run')),
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER,
+    last_used_at INTEGER,
+    revoked_at INTEGER
+  )`)
   conn.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS instances_ws_name ON instances (workspace_id, name) WHERE deleted_at IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS destinations_ws_name ON destinations (workspace_id, name) WHERE deleted_at IS NULL;

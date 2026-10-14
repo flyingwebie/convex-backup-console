@@ -21,6 +21,11 @@ export type WorkspaceSettings = {
   age_recipient: string | null
   age_identity_enc: string | null
   deleted_at: number | null
+  status_token: string | null
+  digest: 'off' | 'daily' | 'weekly'
+  digest_recipients: string | null
+  digest_last_sent: number | null
+  scrub_rules: string | null
 }
 
 export function workspaceSettings(workspaceId: string): WorkspaceSettings {

@@ -315,7 +315,7 @@ function JobForm({ data, job, onClose }: { data: Data; job: JobView | null; onCl
           <Switch id="storage" checked={includeStorage} onCheckedChange={setIncludeStorage} />
         </Field>
       </FieldGroup>
-      <DialogFooter className="bg-background sticky -bottom-4 z-10">
+      <DialogFooter>
         <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
         <Button type="submit" disabled={pending || destinationIds.length === 0}>{job ? 'Save job' : 'Create job'}</Button>
       </DialogFooter>

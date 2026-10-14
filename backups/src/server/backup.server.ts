@@ -12,6 +12,7 @@ import { env } from './env.server'
 import { notify } from './notify.server'
 import { selectToKeep } from './retention'
 import { openDestination, type DestinationRow } from './storage.server'
+import { inspectZip, sha256File } from './zip.server'
 
 type JobRow = {
   id: string
@@ -73,16 +74,21 @@ async function runJob(runId: string, job: JobRow) {
     const res = await convex.downloadExport(snapshot.start_ts)
     if (!res.body) throw new Error('Export download returned no body')
     await pipeline(Readable.fromWeb(res.body as WebReadableStream), fs.createWriteStream(zipFile))
+    // Manifest of what's inside (tables, row counts, files) for browsing, comparing and partial restores.
+    const manifest = await inspectZip(zipFile).catch(() => null)
+    if (manifest) manifest.convexVersion = await convex.version().catch(() => undefined)
     if (job.encrypt) await encryptFile(job.workspace_id, zipFile, uploadFile)
     const { size } = await fs.promises.stat(uploadFile)
+    const sha256 = await sha256File(uploadFile)
+    db().prepare('UPDATE runs SET manifest = ?, sha256 = ? WHERE id = ?').run(manifest ? JSON.stringify(manifest) : null, sha256, runId)
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const key = `${slug(instance.name)}/${stamp}.zip${job.encrypt ? '.age' : ''}`
     const failures: string[] = []
     for (const dest of destinations) {
       try {
-        await openDestination(dest).put(key, uploadFile)
-        insertCopy(runId, dest.id, key, 'ok', null)
+        const put = await openDestination(dest).put(key, uploadFile)
+        insertCopy(runId, dest.id, key, 'ok', null, put.versionId, put.lockedUntil)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         insertCopy(runId, dest.id, key, 'failed', message)
@@ -117,10 +123,10 @@ async function runJob(runId: string, job: JobRow) {
   }
 }
 
-function insertCopy(runId: string, destinationId: string, key: string, status: string, error: string | null) {
+function insertCopy(runId: string, destinationId: string, key: string, status: string, error: string | null, versionId?: string, lockedUntil?: number) {
   db()
-    .prepare('INSERT INTO run_copies (run_id, destination_id, object_key, status, error) VALUES (?, ?, ?, ?, ?)')
-    .run(runId, destinationId, key, status, error)
+    .prepare('INSERT INTO run_copies (run_id, destination_id, object_key, status, error, version_id, locked_until) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(runId, destinationId, key, status, error, versionId ?? null, lockedUntil ?? null)
 }
 
 /** Applies the job's retention policy separately on each destination. */
@@ -128,19 +134,20 @@ async function applyRetention(job: JobRow) {
   const policy = { keepLast: job.keep_last, keepDaily: job.keep_daily, keepWeekly: job.keep_weekly, keepMonthly: job.keep_monthly }
   const copies = db()
     .prepare(
-      `SELECT c.run_id, c.destination_id, c.object_key, r.started_at FROM run_copies c JOIN runs r ON r.id = c.run_id
+      `SELECT c.run_id, c.destination_id, c.object_key, c.version_id, c.locked_until, r.started_at FROM run_copies c JOIN runs r ON r.id = c.run_id
        WHERE r.job_id = ? AND c.status = 'ok' AND c.deleted_at IS NULL`,
     )
-    .all(job.id) as { run_id: string; destination_id: string; object_key: string; started_at: number }[]
+    .all(job.id) as { run_id: string; destination_id: string; object_key: string; version_id: string | null; locked_until: number | null; started_at: number }[]
   const byDest = Map.groupBy(copies, (c) => c.destination_id)
   for (const [destinationId, list] of byDest) {
     const keep = selectToKeep(list.map((c) => ({ id: c.run_id, at: c.started_at })), policy)
-    const doomed = list.filter((c) => !keep.has(c.run_id))
+    // Copies still under Object Lock can't be deleted yet; retention picks them up once unlocked.
+    const doomed = list.filter((c) => !keep.has(c.run_id) && !(c.locked_until && c.locked_until > Date.now()))
     if (!doomed.length) continue
     const dest = openDestination(db().prepare('SELECT * FROM destinations WHERE id = ?').get(destinationId) as DestinationRow)
     for (const copy of doomed) {
       try {
-        await dest.delete(copy.object_key)
+        await dest.delete(copy.object_key, copy.version_id)
         db().prepare('UPDATE run_copies SET deleted_at = ? WHERE run_id = ? AND destination_id = ?').run(Date.now(), copy.run_id, destinationId)
       } catch (err) {
         audit(job.workspace_id, 'system', 'retention.delete_failed', { ...copy, error: String(err) })

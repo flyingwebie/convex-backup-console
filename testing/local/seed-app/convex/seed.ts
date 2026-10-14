@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { action, internalMutation, query } from './_generated/server'
+import { action, internalMutation, mutation, query } from './_generated/server'
 import { api, internal } from './_generated/api'
 
 export const insertNotes = internalMutation({
@@ -68,5 +68,13 @@ export const verifyFiles = action({
       if (sha !== a.sha) mismatched++
     }
     return { checked: attachments.length, mismatched, missing }
+  },
+})
+
+/** Test helper: inserts notes without files. */
+export const insertNotesPublic = mutation({
+  args: { from: v.number(), count: v.number() },
+  handler: async (ctx, { from, count }) => {
+    for (let i = from; i < from + count; i++) await ctx.db.insert('notes', { title: `note ${i}`, n: i })
   },
 })
