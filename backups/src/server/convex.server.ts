@@ -197,7 +197,7 @@ export async function resolveCloudUrl(deployKey: string): Promise<string> {
   }).catch((err: unknown) => {
     throw new Error(`Cannot reach Convex (${env.provisionHost}): ${err instanceof Error ? err.message : String(err)}`)
   })
-  if (res.status === 401 || res.status === 403) throw new Error('Convex rejected this deploy key (revoked or mistyped?)')
+  if ([400, 401, 403].includes(res.status)) throw new Error('Convex rejected this deploy key (revoked or mistyped?)')
   if (!res.ok) throw new Error(`Convex could not resolve the deployment URL (${res.status})`)
   const url = (await res.json()) as unknown
   if (typeof url !== 'string' || !/^https?:\/\//.test(url)) throw new Error('Unexpected response from Convex when resolving the deployment URL')
