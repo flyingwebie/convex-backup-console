@@ -5,7 +5,10 @@ import { ConvexAdmin, type ImportMode } from './convex.server'
 import { decrypt } from './crypto.server'
 import { audit, db } from './db.server'
 import { env } from './env.server'
-import { downloadTo, openDestination, type DestinationRow } from './storage.server'
+import { pipeline } from 'node:stream/promises'
+import { decryptStream } from './encryption.server'
+import { notify } from './notify.server'
+import { openDestination, type DestinationRow } from './storage.server'
 
 const restoring = new Set<string>()
 
@@ -52,17 +55,20 @@ export function startRestore(req: RestoreRequest): string {
     const tmpFile = path.join(tmpDir, `restore-${id}.zip`)
     try {
       const destRow = db().prepare('SELECT * FROM destinations WHERE id = ?').get(req.destinationId) as DestinationRow
-      await downloadTo(openDestination(destRow), copy.object_key, tmpFile)
+      const source = await openDestination(destRow).get(copy.object_key)
+      await pipeline(copy.object_key.endsWith('.age') ? await decryptStream(source) : source, fs.createWriteStream(tmpFile))
       const convex = new ConvexAdmin(target.url, decrypt(target.admin_key_enc))
       const rows = await convex.importZip(tmpFile, req.mode, (message) => {
         db().prepare('UPDATE restores SET confirm_message = ? WHERE id = ?').run(message, id)
       })
       db().prepare("UPDATE restores SET status = 'ok', rows_written = ?, finished_at = ? WHERE id = ?").run(rows, Date.now(), id)
       audit('system', 'restore.completed', { id, rows })
+      await notify({ type: 'restore', status: 'ok', title: `Restore completed into ${target.name}`, details: [`Backup: ${copy.object_key}`, `Mode: ${req.mode}`, `Documents: ${rows}`, `By: ${req.actor}`] })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       db().prepare("UPDATE restores SET status = 'failed', error = ?, finished_at = ? WHERE id = ?").run(message, Date.now(), id)
       audit('system', 'restore.failed', { id, error: message })
+      await notify({ type: 'restore', status: 'failed', title: `Restore into ${target.name} failed`, details: [`Backup: ${copy.object_key}`, message] })
     } finally {
       restoring.delete(target.id)
       await fs.promises.rm(tmpFile, { force: true })

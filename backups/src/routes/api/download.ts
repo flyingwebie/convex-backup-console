@@ -3,6 +3,7 @@ import { Readable } from 'node:stream'
 import { auth } from '~/server/auth.server'
 import { ensureBooted } from '~/server/boot.server'
 import { audit, db } from '~/server/db.server'
+import { decryptStream } from '~/server/encryption.server'
 import { openDestination, type DestinationRow } from '~/server/storage.server'
 
 // GET /api/download?run=<runId>&dest=<destinationId> — streams a stored backup zip.
@@ -21,12 +22,17 @@ export const Route = createFileRoute('/api/download')({
           .get(url.searchParams.get('run'), url.searchParams.get('dest')) as { object_key: string } | undefined
         if (!copy) return new Response('Not found', { status: 404 })
         const dest = db().prepare('SELECT * FROM destinations WHERE id = ?').get(url.searchParams.get('dest')) as DestinationRow
-        const stream = await openDestination(dest).get(copy.object_key)
-        audit(session.user.email, 'backup.downloaded', { key: copy.object_key, destination: dest.name })
+        const encrypted = copy.object_key.endsWith('.age')
+        // ?raw=1 returns the encrypted .age file as stored; otherwise encrypted copies are decrypted.
+        const raw = encrypted && url.searchParams.get('raw') === '1'
+        const source = await openDestination(dest).get(copy.object_key)
+        const stream = encrypted && !raw ? await decryptStream(source) : source
+        const filename = (raw ? copy.object_key : copy.object_key.replace(/\.age$/, '')).replaceAll('/', '_')
+        audit(session.user.email, 'backup.downloaded', { key: copy.object_key, destination: dest.name, raw })
         return new Response(Readable.toWeb(stream) as ReadableStream, {
           headers: {
-            'Content-Type': 'application/zip',
-            'Content-Disposition': `attachment; filename="${copy.object_key.replaceAll('/', '_')}"`,
+            'Content-Type': raw ? 'application/octet-stream' : 'application/zip',
+            'Content-Disposition': `attachment; filename="${filename}"`,
             'Cache-Control': 'no-store',
           },
         })

@@ -3,10 +3,14 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { ConvexAdmin } from './convex.server'
 import { decrypt } from './crypto.server'
 import { audit, db } from './db.server'
+import { encryptFile } from './encryption.server'
 import { env } from './env.server'
+import { notify } from './notify.server'
+import { selectToKeep } from './retention'
 import { openDestination, type DestinationRow } from './storage.server'
 
 type JobRow = {
@@ -14,7 +18,11 @@ type JobRow = {
   name: string
   instance_id: string
   include_storage: number
+  encrypt: number
   keep_last: number | null
+  keep_daily: number | null
+  keep_weekly: number | null
+  keep_monthly: number | null
 }
 type InstanceRow = { id: string; name: string; url: string; admin_key_enc: string }
 
@@ -32,14 +40,15 @@ export function startJob(jobId: string, trigger: string): string {
   if (running.has(job.instance_id)) throw new Error('A backup for this instance is already running')
   const runId = randomUUID()
   db()
-    .prepare('INSERT INTO runs (id, job_id, instance_id, trigger, status, started_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(runId, job.id, job.instance_id, trigger, 'running', Date.now())
+    .prepare('INSERT INTO runs (id, job_id, instance_id, trigger, status, started_at, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(runId, job.id, job.instance_id, trigger, 'running', Date.now(), job.encrypt)
   running.add(job.instance_id)
   void runJob(runId, job)
-    .catch((err: unknown) => {
+    .catch(async (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err)
       db().prepare('UPDATE runs SET status = ?, error = ?, finished_at = ? WHERE id = ?').run('failed', message, Date.now(), runId)
       audit('system', 'backup.failed', { runId, jobId: job.id, error: message })
+      await notify({ type: 'backup', status: 'failed', title: `Backup failed: ${job.name}`, details: [message] })
     })
     .finally(() => running.delete(job.instance_id))
   return runId
@@ -57,38 +66,53 @@ async function runJob(runId: string, job: JobRow) {
 
   const tmpDir = path.join(env.dataDir, 'tmp')
   await fs.promises.mkdir(tmpDir, { recursive: true })
-  const tmpFile = path.join(tmpDir, `${runId}.zip`)
+  const zipFile = path.join(tmpDir, `${runId}.zip`)
+  const uploadFile = job.encrypt ? `${zipFile}.age` : zipFile
   try {
     const res = await convex.downloadExport(snapshot.start_ts)
     if (!res.body) throw new Error('Export download returned no body')
-    await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), fs.createWriteStream(tmpFile))
-    const { size } = await fs.promises.stat(tmpFile)
+    await pipeline(Readable.fromWeb(res.body as WebReadableStream), fs.createWriteStream(zipFile))
+    if (job.encrypt) await encryptFile(zipFile, uploadFile)
+    const { size } = await fs.promises.stat(uploadFile)
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const key = `${slug(instance.name)}/${stamp}.zip`
-    let ok = 0
+    const key = `${slug(instance.name)}/${stamp}.zip${job.encrypt ? '.age' : ''}`
+    const failures: string[] = []
     for (const dest of destinations) {
       try {
-        await openDestination(dest).put(key, tmpFile)
+        await openDestination(dest).put(key, uploadFile)
         insertCopy(runId, dest.id, key, 'ok', null)
-        ok++
       } catch (err) {
-        insertCopy(runId, dest.id, key, 'failed', err instanceof Error ? err.message : String(err))
+        const message = err instanceof Error ? err.message : String(err)
+        insertCopy(runId, dest.id, key, 'failed', message)
+        failures.push(`${dest.name}: ${message}`)
       }
     }
-    if (ok === 0) throw new Error('Upload failed on every destination')
+    if (failures.length === destinations.length) throw new Error(`Upload failed on every destination — ${failures.join('; ')}`)
 
     // Only clean up the source once we hold at least one copy.
     await convex.expireExport(snapshot._id).catch((err: unknown) => {
       audit('system', 'export.expire_failed', { runId, error: String(err) })
     })
 
-    const status = ok === destinations.length ? 'ok' : 'partial'
+    const status = failures.length ? 'partial' : 'ok'
     db().prepare('UPDATE runs SET status = ?, bytes = ?, finished_at = ? WHERE id = ?').run(status, size, Date.now(), runId)
     audit('system', 'backup.completed', { runId, jobId: job.id, status, bytes: size })
-    if (job.keep_last) await applyRetention(job.id, job.keep_last)
+    await applyRetention(job)
+    await notify({
+      type: 'backup',
+      status,
+      title: `${status === 'ok' ? 'Backup completed' : 'Backup partially failed'}: ${job.name}`,
+      details: [
+        `Instance: ${instance.name}`,
+        `Size: ${(size / 1024 / 1024).toFixed(1)} MB${job.encrypt ? ' (encrypted)' : ''}`,
+        `Copies: ${destinations.length - failures.length}/${destinations.length}`,
+        ...failures,
+      ],
+    })
   } finally {
-    await fs.promises.rm(tmpFile, { force: true })
+    await fs.promises.rm(zipFile, { force: true })
+    await fs.promises.rm(`${zipFile}.age`, { force: true })
   }
 }
 
@@ -98,27 +122,28 @@ function insertCopy(runId: string, destinationId: string, key: string, status: s
     .run(runId, destinationId, key, status, error)
 }
 
-/** Keeps the newest `keepLast` successful copies per destination for this job; deletes older ones. */
-async function applyRetention(jobId: string, keepLast: number) {
+/** Applies the job's retention policy separately on each destination. */
+async function applyRetention(job: JobRow) {
+  const policy = { keepLast: job.keep_last, keepDaily: job.keep_daily, keepWeekly: job.keep_weekly, keepMonthly: job.keep_monthly }
   const copies = db()
     .prepare(
-      `SELECT c.run_id, c.destination_id, c.object_key FROM run_copies c JOIN runs r ON r.id = c.run_id
-       WHERE r.job_id = ? AND c.status = 'ok' AND c.deleted_at IS NULL ORDER BY r.started_at DESC`,
+      `SELECT c.run_id, c.destination_id, c.object_key, r.started_at FROM run_copies c JOIN runs r ON r.id = c.run_id
+       WHERE r.job_id = ? AND c.status = 'ok' AND c.deleted_at IS NULL`,
     )
-    .all(jobId) as { run_id: string; destination_id: string; object_key: string }[]
-  const seen = new Map<string, number>()
-  for (const copy of copies) {
-    const n = (seen.get(copy.destination_id) ?? 0) + 1
-    seen.set(copy.destination_id, n)
-    if (n <= keepLast) continue
-    const dest = db().prepare('SELECT * FROM destinations WHERE id = ?').get(copy.destination_id) as DestinationRow
-    try {
-      await openDestination(dest).delete(copy.object_key)
-      db()
-        .prepare('UPDATE run_copies SET deleted_at = ? WHERE run_id = ? AND destination_id = ?')
-        .run(Date.now(), copy.run_id, copy.destination_id)
-    } catch (err) {
-      audit('system', 'retention.delete_failed', { ...copy, error: String(err) })
+    .all(job.id) as { run_id: string; destination_id: string; object_key: string; started_at: number }[]
+  const byDest = Map.groupBy(copies, (c) => c.destination_id)
+  for (const [destinationId, list] of byDest) {
+    const keep = selectToKeep(list.map((c) => ({ id: c.run_id, at: c.started_at })), policy)
+    const doomed = list.filter((c) => !keep.has(c.run_id))
+    if (!doomed.length) continue
+    const dest = openDestination(db().prepare('SELECT * FROM destinations WHERE id = ?').get(destinationId) as DestinationRow)
+    for (const copy of doomed) {
+      try {
+        await dest.delete(copy.object_key)
+        db().prepare('UPDATE run_copies SET deleted_at = ? WHERE run_id = ? AND destination_id = ?').run(Date.now(), copy.run_id, destinationId)
+      } catch (err) {
+        audit('system', 'retention.delete_failed', { ...copy, error: String(err) })
+      }
     }
   }
 }

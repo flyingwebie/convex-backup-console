@@ -12,6 +12,7 @@ export function db(): Database.Database {
   conn.pragma('journal_mode = WAL')
   conn.pragma('foreign_keys = ON')
   conn.exec(SCHEMA)
+  migrate(conn)
   g.__db = conn
   return conn
 }
@@ -83,6 +84,19 @@ CREATE TABLE IF NOT EXISTS restores (
   started_at INTEGER NOT NULL,
   finished_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS channels (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  config_enc TEXT NOT NULL,
+  on_failure INTEGER NOT NULL DEFAULT 1,
+  on_success INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   at INTEGER NOT NULL,
@@ -96,4 +110,26 @@ export function audit(actor: string, action: string, detail?: unknown) {
   db()
     .prepare('INSERT INTO audit (at, actor, action, detail) VALUES (?, ?, ?, ?)')
     .run(Date.now(), actor, action, detail === undefined ? null : JSON.stringify(detail))
+}
+
+/** Additive column migrations for databases created by earlier versions. */
+function migrate(conn: Database.Database) {
+  const add = (table: string, column: string, ddl: string) => {
+    const cols = conn.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+    if (!cols.some((c) => c.name === column)) conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`)
+  }
+  add('jobs', 'keep_daily', 'INTEGER')
+  add('jobs', 'keep_weekly', 'INTEGER')
+  add('jobs', 'keep_monthly', 'INTEGER')
+  add('jobs', 'encrypt', 'INTEGER NOT NULL DEFAULT 0')
+  add('runs', 'encrypted', 'INTEGER NOT NULL DEFAULT 0')
+}
+
+export function getSetting(key: string): string | null {
+  const row = db().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
+  return row?.value ?? null
+}
+
+export function setSetting(key: string, value: string) {
+  db().prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value)
 }

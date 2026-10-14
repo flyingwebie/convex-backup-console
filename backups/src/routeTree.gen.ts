@@ -9,16 +9,23 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SecurityRouteImport } from './routes/security'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppAuditRouteImport } from './routes/_app/audit'
+import { Route as AppDestinationsRouteImport } from './routes/_app/destinations'
+import { Route as AppInstancesRouteImport } from './routes/_app/instances'
+import { Route as AppJobsRouteImport } from './routes/_app/jobs'
+import { Route as AppNotificationsRouteImport } from './routes/_app/notifications'
+import { Route as AppRunsRouteImport } from './routes/_app/runs'
+import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as ApiDownloadRouteImport } from './routes/api/download'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -30,6 +37,46 @@ const SecurityRoute = SecurityRouteImport.update({
   id: '/security',
   path: '/security',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAuditRoute = AppAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDestinationsRoute = AppDestinationsRouteImport.update({
+  id: '/destinations',
+  path: '/destinations',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppInstancesRoute = AppInstancesRouteImport.update({
+  id: '/instances',
+  path: '/instances',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppJobsRoute = AppJobsRouteImport.update({
+  id: '/jobs',
+  path: '/jobs',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppNotificationsRoute = AppNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRunsRoute = AppRunsRouteImport.update({
+  id: '/runs',
+  path: '/runs',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRoute,
 } as any)
 const ApiDownloadRoute = ApiDownloadRouteImport.update({
   id: '/api/download',
@@ -48,28 +95,50 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/security': typeof SecurityRoute
+  '/audit': typeof AppAuditRoute
+  '/destinations': typeof AppDestinationsRoute
+  '/instances': typeof AppInstancesRoute
+  '/jobs': typeof AppJobsRoute
+  '/notifications': typeof AppNotificationsRoute
+  '/runs': typeof AppRunsRoute
+  '/settings': typeof AppSettingsRoute
   '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/security': typeof SecurityRoute
+  '/audit': typeof AppAuditRoute
+  '/destinations': typeof AppDestinationsRoute
+  '/instances': typeof AppInstancesRoute
+  '/jobs': typeof AppJobsRoute
+  '/notifications': typeof AppNotificationsRoute
+  '/runs': typeof AppRunsRoute
+  '/settings': typeof AppSettingsRoute
   '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
+  '/': typeof AppIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/security': typeof SecurityRoute
+  '/_app/audit': typeof AppAuditRoute
+  '/_app/destinations': typeof AppDestinationsRoute
+  '/_app/instances': typeof AppInstancesRoute
+  '/_app/jobs': typeof AppJobsRoute
+  '/_app/notifications': typeof AppNotificationsRoute
+  '/_app/runs': typeof AppRunsRoute
+  '/_app/settings': typeof AppSettingsRoute
   '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
+  '/_app/': typeof AppIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
@@ -78,29 +147,51 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/security'
+    | '/audit'
+    | '/destinations'
+    | '/instances'
+    | '/jobs'
+    | '/notifications'
+    | '/runs'
+    | '/settings'
     | '/api/download'
     | '/api/health'
     | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
     | '/login'
     | '/security'
+    | '/audit'
+    | '/destinations'
+    | '/instances'
+    | '/jobs'
+    | '/notifications'
+    | '/runs'
+    | '/settings'
     | '/api/download'
     | '/api/health'
+    | '/'
     | '/api/auth/$'
   id:
     | '__root__'
-    | '/'
+    | '/_app'
     | '/login'
     | '/security'
+    | '/_app/audit'
+    | '/_app/destinations'
+    | '/_app/instances'
+    | '/_app/jobs'
+    | '/_app/notifications'
+    | '/_app/runs'
+    | '/_app/settings'
     | '/api/download'
     | '/api/health'
+    | '/_app/'
     | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
   SecurityRoute: typeof SecurityRoute
   ApiDownloadRoute: typeof ApiDownloadRoute
@@ -110,11 +201,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
+    '/_app': {
+      id: '/_app'
+      path: ''
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+      preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -130,6 +221,62 @@ declare module '@tanstack/react-router' {
       fullPath: '/security'
       preLoaderRoute: typeof SecurityRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/audit': {
+      id: '/_app/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof AppAuditRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/destinations': {
+      id: '/_app/destinations'
+      path: '/destinations'
+      fullPath: '/destinations'
+      preLoaderRoute: typeof AppDestinationsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/instances': {
+      id: '/_app/instances'
+      path: '/instances'
+      fullPath: '/instances'
+      preLoaderRoute: typeof AppInstancesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/jobs': {
+      id: '/_app/jobs'
+      path: '/jobs'
+      fullPath: '/jobs'
+      preLoaderRoute: typeof AppJobsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/notifications': {
+      id: '/_app/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof AppNotificationsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/runs': {
+      id: '/_app/runs'
+      path: '/runs'
+      fullPath: '/runs'
+      preLoaderRoute: typeof AppRunsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
     }
     '/api/download': {
       id: '/api/download'
@@ -155,8 +302,32 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AppRouteChildren {
+  AppAuditRoute: typeof AppAuditRoute
+  AppDestinationsRoute: typeof AppDestinationsRoute
+  AppInstancesRoute: typeof AppInstancesRoute
+  AppJobsRoute: typeof AppJobsRoute
+  AppNotificationsRoute: typeof AppNotificationsRoute
+  AppRunsRoute: typeof AppRunsRoute
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppIndexRoute: typeof AppIndexRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppAuditRoute: AppAuditRoute,
+  AppDestinationsRoute: AppDestinationsRoute,
+  AppInstancesRoute: AppInstancesRoute,
+  AppJobsRoute: AppJobsRoute,
+  AppNotificationsRoute: AppNotificationsRoute,
+  AppRunsRoute: AppRunsRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppIndexRoute: AppIndexRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
   SecurityRoute: SecurityRoute,
   ApiDownloadRoute: ApiDownloadRoute,

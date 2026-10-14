@@ -5,7 +5,7 @@
     "moduleResolution": "Bundler",
     "module": "ESNext",
     "target": "ES2022",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "strict": true,
     "skipLibCheck": true,

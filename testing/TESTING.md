@@ -39,3 +39,18 @@ Run in a **separate Coolify project**. Never against a real project's instance.
 
 Also checked: state and sessions survive a container redeploy; the container runs read-only as non-root;
 old admin keys stay valid after a wipe as long as `INSTANCE_SECRET` is unchanged.
+
+## Local Docker run #2 — encryption, retention, notifications, new UI (2026-10-14)
+
+| Check | Result |
+|---|---|
+| Upgrade in place on an old database | ✅ new columns added by migration; existing job kept |
+| age encryption | ✅ `.zip.age` on R2 + local; decrypted **offline with the official `age` CLI v1.2.1** → 500 notes, 20 attachments, 20 files, all CRCs OK |
+| Encrypted restore into a wiped B (`requireEmpty`) | ✅ 520 docs; fingerprint and all 20 file SHA-256 match |
+| `requireEmpty` into a non-empty instance | ✅ refused by Convex: "Table _storage already exists" |
+| Retention tiers | ✅ unit tests (`retention.test.ts`, hand-computed GFS case); 1 daily → only the newest copy of the day kept on every destination |
+| Notifications | ✅ generic webhook, Discord-format embed and SMTP email (Mailpit) delivered; success sent only to channels that opted in; restore success + failure events |
+| Decrypted + raw `.age` download | ✅ |
+| New shadcn UI, end to end | ✅ `testing/local/e2e/e2e.mjs`: 13 Playwright checks on a fresh console (login, 2FA enrolment, instances, destination, key, channel, job, run, download, refused restore, alert, overview, audit) |
+
+Not testable locally: Telegram (needs api.telegram.org), real R2/Discord/Slack endpoints, Cloudflare Tunnel.

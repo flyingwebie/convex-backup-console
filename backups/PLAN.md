@@ -16,10 +16,11 @@ in Coolify from `backups/docker-compose.yaml`. Replaces `orenaksakal/convex-self
 
 ## Architecture
 
-- **One container**: TanStack Start (Node) + in-process scheduler + SQLite (Drizzle) on a `/data` volume.
-- **Auth**: Better Auth — email+password, sign-up disabled, first admin seeded from env, TOTP 2FA.
-- **Exposure**: no Coolify domain. `cloudflared` sidecar (Cloudflare Tunnel) → `backups.<domain>`,
-  guarded by Cloudflare Access (fixed email list, email PIN, 24h session). No public origin route.
+- **One container**: TanStack Start (Node) + in-process scheduler (croner) + SQLite (better-sqlite3) on a `/data` volume.
+- **Auth**: Better Auth — email+password, sign-up disabled, first admin seeded from env, mandatory TOTP 2FA + backup codes.
+- **UI**: shadcn/ui (Radix, Nova preset) with sidebar layout, light/dark theme.
+- **Exposure**: Coolify domain (Traefik + Let's Encrypt) by default — login is protected by mandatory
+  TOTP and rate limiting. Optional `docker-compose.tunnel.yaml` adds Cloudflare Tunnel + Access for no public route.
 - **Secrets**: instance admin keys and destination credentials encrypted at rest (AES-256-GCM)
   with `BACKUP_MASTER_KEY`. Archives encrypted with **age** (key exported once to a password manager).
 - **Images**: GitHub Actions → `ghcr.io/flyingwebie/convex-backup-console` (amd64), tagged by version + SHA.
@@ -49,6 +50,8 @@ Streaming: download → age encrypt → fan-out multipart uploads; never buffer 
    optionally on success.
 
 Later: partial/table restore, instance self-registration, more users/roles, daily digest.
+
+**Status (2026-10-14):** everything in v1 is built and tested locally (`testing/TESTING.md`).
 
 ## Onboarding a new instance (manual, ~2 min)
 

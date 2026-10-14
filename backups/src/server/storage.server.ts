@@ -58,7 +58,7 @@ class S3Destination implements Destination {
   async put(key: string, file: string) {
     const upload = new Upload({
       client: this.client,
-      params: { Bucket: this.cfg.bucket, Key: this.fullKey(key), Body: fs.createReadStream(file), ContentType: 'application/zip' },
+      params: { Bucket: this.cfg.bucket, Key: this.fullKey(key), Body: fs.createReadStream(file), ContentType: key.endsWith('.age') ? 'application/octet-stream' : 'application/zip' },
       partSize: 16 * 1024 * 1024,
       queueSize: 4,
     })
@@ -100,8 +100,4 @@ class LocalDestination implements Destination {
   async delete(key: string) {
     await fs.promises.rm(this.resolve(key), { force: true })
   }
-}
-
-export async function downloadTo(dest: Destination, key: string, file: string) {
-  await pipeline(await dest.get(key), fs.createWriteStream(file))
 }
