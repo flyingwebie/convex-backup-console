@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Back up production first
-        uses: flyingwebie/convex-selfhost-coolify/.github/actions/convex-backup@main
+        uses: flyingwebie/convex-backup-console/.github/actions/convex-backup@main
         with:
           console-url: https://backups.example.com
           token: ${{ secrets.BACKUP_CONSOLE_TOKEN }}

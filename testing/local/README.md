@@ -6,7 +6,7 @@ Runs the real instance template (Postgres + RustFS) twice, plus the console, on 
 # 1. Convex A (source) and B (restore target) from the root template
 for n in a b; do
   docker compose -p convex-$n --env-file testing/local/.env.$n \
-    -f docker-compose.yaml -f testing/local/compose.override.yaml up -d
+    -f convex-instance.coolify.yaml -f testing/local/compose.override.yaml up -d
   docker compose -p convex-$n exec -T backend ./generate_admin_key.sh | tail -1 > /tmp/cbc-key-$n
 done
 
@@ -23,7 +23,7 @@ docker run -d --name cbc-r2 --network cbc-net -p 9100:9000 \
 docker run --rm --network cbc-net -e AWS_ACCESS_KEY_ID=r2key -e AWS_SECRET_ACCESS_KEY=r2-secret-key \
   -e AWS_REGION=us-east-1 amazon/aws-cli:2.36.34 --endpoint-url http://cbc-r2:9000 \
   s3api create-bucket --bucket convex-backups-test
-docker build -t cbc-test backups
+docker build -t cbc-test app
 docker run -d --name cbc-app --network cbc-net --add-host=host.docker.internal:host-gateway \
   --read-only --tmpfs /tmp -v cbc-vol:/data -p 3078:3000 \
   -e BACKUP_MASTER_KEY=local-master-key -e BETTER_AUTH_SECRET=dev-secret-0123456789abcdefghijkl \

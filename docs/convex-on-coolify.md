@@ -1,9 +1,9 @@
 # Convex Self-Hosted on Coolify — Postgres + RustFS
 
 > **Backups:** sections 3–4 below describe the old per-instance `backups` sidecar. It's superseded by
-> the [Convex Backup Console](../backups/README.md), which backs up and restores every instance from one place.
+> the [Convex Backup Console](../app/README.md), which backs up and restores every instance from one place.
 
-A single `docker-compose.yaml` that deploys a production-grade, fully self-hosted [Convex](https://github.com/get-convex/convex-backend) stack on [Coolify](https://coolify.io):
+A single compose file ([`convex-instance.coolify.yaml`](../convex-instance.coolify.yaml)) that deploys a production-grade, fully self-hosted [Convex](https://github.com/get-convex/convex-backend) stack on [Coolify](https://coolify.io):
 
 | Service          | Role                                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------- |
@@ -71,7 +71,7 @@ Solid arrows = runtime traffic · dashed = one-shot or maintenance jobs. Everyth
 
 ### 1.1 Create the resource
 
-1. In Coolify: **+ New Resource → Docker Compose** (empty), paste the contents of `docker-compose.yaml` (or point Coolify at a Git repo containing it).
+1. In Coolify: **+ New Resource → Docker Compose** (empty), paste the contents of `convex-instance.coolify.yaml` (or point Coolify at a Git repo containing it).
 2. Coolify parses the file and auto-generates the *magic variables*:
    - `SERVICE_USER_POSTGRES` / `SERVICE_PASSWORD_POSTGRES`
    - `SERVICE_USER_RUSTFS` / `SERVICE_PASSWORD_RUSTFS`

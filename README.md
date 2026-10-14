@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="coolify/svgs/convex-backup-console.svg" width="72" alt="Convex Backup Console logo" />
+<img src="docs/images/logo.svg" width="96" alt="Convex Backup Console logo" />
 
 # Convex Backup Console
 
@@ -11,10 +11,10 @@ point-and-click restores, ransomware-proof storage and a console your whole team
 Plus a production-ready **Convex-on-Coolify** template to run the instances themselves.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Deploy on Coolify](https://img.shields.io/badge/deploy%20on-Coolify-8C52FF?logo=coolify&logoColor=white)](coolify/README.md)
+[![Deploy on Coolify](https://img.shields.io/badge/deploy%20on-Coolify-8C52FF?logo=coolify&logoColor=white)](docs/coolify.md)
 [![Convex](https://img.shields.io/badge/Convex-self--hosted%20%26%20Cloud-EE342F)](https://convex.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-TanStack%20Start-3178C6?logo=typescript&logoColor=white)](backups)
-[![e2e](https://img.shields.io/badge/e2e-39%20checks-2ea44f)](testing/TESTING.md)
+[![TypeScript](https://img.shields.io/badge/TypeScript-TanStack%20Start-3178C6?logo=typescript&logoColor=white)](app)
+[![e2e](https://img.shields.io/badge/e2e-53%20checks-2ea44f)](testing/TESTING.md)
 
 [Quick start](#-quick-start) · [Features](#-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Security](#-security) · [FAQ](#-faq)
 
@@ -65,7 +65,8 @@ Convex Backup Console does all of that in a single container.
 
 **Operations**
 - 📈 **Overview & storage dashboard:** health per instance, growth chart, monthly cost estimate.
-- 🔔 **Alerts:** Slack, Discord, Telegram, email, webhook; daily/weekly **digest emails**.
+- ✉️ **Branded emails** built with React Email: the workspace logo, accent colour and footer; templates you edit with variables and a live desktop/mobile preview (owners can write full HTML); and a **per-email recipients grid** (roles, specific members, outside addresses, "who did it"). Members can opt out, and alerts cover failed/partial backups, no recent backup, restores and daily/weekly digests.
+- 🔔 **Chat alerts:** Slack, Discord, Telegram, webhook.
 - 🩺 **Status URL** for Uptime Kuma, Better Stack and UptimeRobot (200 healthy / 503 not).
 - 🚀 **REST API + GitHub Action:** back up right before `npx convex deploy`, with a per-workspace switch to turn API access off (the Action then skips).
 - 🗑️ **Trash & deletion policy:** restore deleted items for N days, with **separate toggles** for deleting their backup files from **remote** (S3/R2/B2) and **local** storage.
@@ -81,13 +82,15 @@ Convex Backup Console does all of that in a single container.
 
 ### Coolify (recommended)
 
-1. **+ New → Docker Compose Empty** → paste [`coolify/templates/convex-backup-console.yaml`](coolify/templates/convex-backup-console.yaml).
-2. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD`. Coolify generates the domain and the secrets.
-3. **Deploy**, sign in, enrol 2FA, then create your encryption key in **Workspace → Settings**.
+1. **+ New → Docker Compose Empty** → paste [`backup-console.coolify.yaml`](backup-console.coolify.yaml).
+2. **Deploy**. Coolify generates the domain and the secrets.
+3. Open the URL and follow the **setup wizard**: paste the one-time setup code from the service's **Logs**, create
+   your admin account, add 2FA, create the first workspace (name, logo, timezone) and invite your team.
+4. Create your encryption key in **Workspace → Settings**.
 
 > **Save `SERVICE_PASSWORD_64_MASTERKEY` in your password manager.** It encrypts every stored key and secret.
 
-Full guide, including OAuth setup: [`coolify/README.md`](coolify/README.md).
+Full guide, including OAuth setup: [`docs/coolify.md`](docs/coolify.md).
 
 ### Any Docker host
 
@@ -97,25 +100,26 @@ docker run -d --name convex-backups -p 3000:3000 \
   -e PUBLIC_URL=https://backups.example.com \
   -e BACKUP_MASTER_KEY="$(openssl rand -base64 48)" \
   -e BETTER_AUTH_SECRET="$(openssl rand -base64 48)" \
-  -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='a-long-password' \
   ghcr.io/flyingwebie/convex-backup-console:latest
+docker logs convex-backups   # shows the setup code; then open your PUBLIC_URL
 ```
 
-Put it behind HTTPS (Traefik, Caddy, Nginx or a Cloudflare Tunnel; see [`backups/docker-compose.tunnel.yaml`](backups/docker-compose.tunnel.yaml)).
+Put it behind HTTPS (Traefik, Caddy, Nginx or a Cloudflare Tunnel; see [`app/docker-compose.tunnel.yaml`](app/docker-compose.tunnel.yaml)).
 
 ### Then
 
 | Step | Where |
 |---|---|
 | Add a **self-hosted** instance: API URL + `./generate_admin_key.sh` output | Instances → Add instance |
-| Add a **Convex Cloud** deployment: a production or dev **deploy key** | Instances → Add instance → Convex Cloud ([guide](backups/README.md#back-up-a-convex-cloud-deployment)) |
+| Add a **Convex Cloud** deployment: a production or dev **deploy key** | Instances → Add instance → Convex Cloud ([guide](app/README.md#back-up-a-convex-cloud-deployment)) |
 | Add a destination (R2, S3, B2…), optionally with Object Lock | Destinations |
 | Create a job: schedule, retention, encryption | Jobs |
-| Get alerts | Notifications |
+| Choose who gets which email, brand and edit them | Emails |
+| Chat/webhook alerts | Notifications |
 
 ### Need a Convex instance first?
 
-[`coolify/templates/convex.yaml`](coolify/templates/convex.yaml) deploys self-hosted Convex with **Postgres** and
+[`convex-instance.coolify.yaml`](convex-instance.coolify.yaml) deploys self-hosted Convex with **Postgres** and
 **RustFS** (S3) storage on Coolify. The detailed walkthrough is in [`docs/convex-on-coolify.md`](docs/convex-on-coolify.md).
 
 ## 🖼️ Screenshots
@@ -147,7 +151,7 @@ flowchart LR
   X --> D3[(Local volume)]
   D1 & D2 & D3 --> R
   I --> SH & CC
-  X -. alerts & digests .-> N[Slack · Discord · Telegram · Email · Webhook]
+  X -. alerts & digests .-> N[Branded email · Slack · Discord · Telegram · Webhook]
 ```
 
 1. A job asks the instance for a **snapshot export** through Convex's admin HTTP API, the same API `npx convex export` uses.
@@ -178,7 +182,7 @@ npx convex import --replace-all backup.zip                           # into any 
 ## 🤖 Back up before every deploy
 
 ```yaml
-- uses: flyingwebie/convex-selfhost-coolify/.github/actions/convex-backup@main
+- uses: flyingwebie/convex-backup-console/.github/actions/convex-backup@main
   with:
     console-url: https://backups.example.com
     token: ${{ secrets.BACKUP_CONSOLE_TOKEN }}   # Workspace → Settings → API tokens
@@ -205,21 +209,23 @@ Convex Cloud's own backups are excellent, so keep them on. This adds independent
 ## 📁 Repository
 
 ```
-backups/                 Convex Backup Console (TanStack Start · Better Auth · SQLite · shadcn/ui)
-coolify/                 Coolify templates (console + Convex instance) and logo
-docker-compose.yaml      Convex-on-Coolify instance template (Postgres + RustFS)
-docs/                    Guides, API reference, images
-testing/                 Local Docker kit, Playwright e2e (39 checks), demo data
-.github/                 Image build (amd64 + arm64) and the convex-backup GitHub Action
+app/                            The console: TanStack Start · Better Auth · SQLite · React Email · shadcn/ui
+backup-console.coolify.yaml     Coolify template: the console (deploy once)
+convex-instance.coolify.yaml    Coolify template: a self-hosted Convex instance (Postgres + RustFS), one per project
+docs/                           Guides (Coolify, Convex on Coolify, GitHub Action), images
+testing/                        Local Docker kit, Playwright e2e (45 + 8 onboarding checks), demo data
+legacy/                         The old all-in-one instance compose, kept for existing deployments
+.github/                        Image build (amd64 + arm64) and the convex-backup GitHub Action
 ```
 
 ## 🧪 Development & tests
 
 ```bash
-cd backups && pnpm install
+cd app && pnpm install
 BACKUP_MASTER_KEY=dev BETTER_AUTH_SECRET=dev-secret-at-least-32-characters-long \
-ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-password' pnpm dev
-pnpm exec vitest run
+SETUP_CODE=dev-setup pnpm dev   # then open http://localhost:3000/setup
+pnpm test                       # unit tests
+pnpm typecheck
 ```
 
 The end-to-end suite runs two real Convex stacks (Postgres + RustFS), an S3 stand-in, Mailpit and a
@@ -247,7 +253,12 @@ Set `MICROSOFT_TENANT_ID` to `common` (any account), `organizations` (work/schoo
 - Scheduled restore drills with automatic verification
 - Backing up Convex environment variables alongside data
 - Self-registration of new instances from the Convex template
-- One-click template in Coolify's built-in catalogue ([how to submit](coolify/README.md#submit-them-to-coolifys-built-in-template-list))
+- One-click template in Coolify's built-in catalogue ([how to submit](docs/coolify.md#submit-them-to-coolifys-built-in-template-list))
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome — start with [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Found a vulnerability? Please report it privately as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 

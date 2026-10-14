@@ -1,0 +1,57 @@
+# documentation: https://github.com/flyingwebie/convex-backup-console/tree/main/app
+# slogan: Shared backup & restore console for self-hosted Convex instances.
+# tags: convex, backups, restore, s3, r2
+# port: 3000
+#
+# Deploy ONCE in Coolify (Docker Compose Location: /app/docker-compose.yaml).
+# Coolify gives the `app` service a domain (SERVICE_URL_APP_3000) behind Traefik + Let's Encrypt.
+# Login is protected by email+password with mandatory TOTP 2FA and rate limiting.
+# For an extra lock (no public route at all) use docker-compose.tunnel.yaml instead.
+#
+# Coolify magic variables (auto-generated on first deploy):
+#   SERVICE_URL_APP_3000           -> public URL of the console
+#   SERVICE_PASSWORD_64_MASTERKEY  -> encrypts stored admin keys, S3 secrets and the age key. BACK IT UP.
+#   SERVICE_PASSWORD_64_AUTHSECRET -> signs login sessions
+# Set manually in Coolify:
+#   nothing — on first run open the URL; the setup wizard asks for the code printed in the logs
+#   (optional: SETUP_CODE to choose it, or ADMIN_EMAIL / ADMIN_PASSWORD to skip the wizard)
+
+services:
+  app:
+    image: ghcr.io/flyingwebie/convex-backup-console:${CONSOLE_VERSION:-latest}
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m
+    environment:
+      - SERVICE_URL_APP_3000
+      - PUBLIC_URL=${SERVICE_URL_APP}
+      - BACKUP_MASTER_KEY=${SERVICE_PASSWORD_64_MASTERKEY}
+      - BETTER_AUTH_SECRET=${SERVICE_PASSWORD_64_AUTHSECRET}
+      - SETUP_CODE=${SETUP_CODE:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # Optional sign-in providers — each is enabled when both values are set.
+      # Callback URL: <PUBLIC_URL>/api/auth/callback/{google|github|microsoft}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID:-}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET:-}
+      - MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID:-common}
+    volumes:
+      # SQLite state, temp export files and any "local" destination (use /data/backups).
+      - console-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+
+volumes:
+  console-data:

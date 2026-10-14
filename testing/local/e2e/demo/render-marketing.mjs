@@ -5,7 +5,7 @@ import { chromium } from 'playwright'
 const ROOT = new URL('../../../../', import.meta.url).pathname
 const OUT = `${ROOT}docs/images/`
 const img = (name) => `data:image/png;base64,${fs.readFileSync(`${OUT}screens/${name}.png`).toString('base64')}`
-const logo = `data:image/svg+xml;base64,${fs.readFileSync(`${ROOT}coolify/svgs/convex-backup-console.svg`).toString('base64')}`
+const logo = `data:image/svg+xml;base64,${fs.readFileSync(`${ROOT}docs/images/logo.svg`).toString('base64')}`
 
 const base = `
   <style>

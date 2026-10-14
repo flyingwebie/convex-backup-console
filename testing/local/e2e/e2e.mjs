@@ -643,8 +643,12 @@ try {
 
   // Status URL, audit CSV, platform SMTP, digest + invitation emails, storage page
   await page.reload()
-  await page.getByRole('button', { name: 'Enable' }).click()
-  await page.getByText('Status URL enabled').waitFor()
+  // Clicks before hydration are lost; retry until the toast confirms it.
+  for (let i = 0; ; i++) {
+    await page.getByRole('button', { name: 'Enable' }).click()
+    if (await page.getByText('Status URL enabled').waitFor({ timeout: 4000 }).then(() => true, () => false)) break
+    if (i === 4) throw new Error('Status URL could not be enabled')
+  }
   const statusUrl = await page.locator('input[readonly]').first().inputValue()
   const status = await fetch(statusUrl)
   const health = await status.json()
@@ -660,25 +664,169 @@ try {
   await page.getByLabel('From', { exact: true }).fill('Backups <backups@example.com>')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await page.getByText('SMTP saved').waitFor()
+  const MAILPIT = env('MAILPIT', 'http://localhost:8025')
+  await fetch(`${MAILPIT}/api/v1/messages`, { method: 'DELETE' })
+  const inbox = async () => (await (await fetch(`${MAILPIT}/api/v1/messages`)).json()).messages
+  const waitMail = async (pred, what) => {
+    for (let i = 0; i < 40; i++) {
+      const m = (await inbox()).find(pred)
+      if (m) return m
+      await page.waitForTimeout(250)
+    }
+    throw new Error(`No email: ${what}. Inbox: ${(await inbox()).map((m) => `${m.To.map((t) => t.Address)} "${m.Subject}"`).join(' | ')}`)
+  }
+
+  // Legacy "Email" alert channels move to the Emails page on boot (simulated old row + restart).
+  const wsId = dbGet("SELECT id FROM organization WHERE name = 'Flying Web'").id
+  const legacyCfg = JSON.stringify({ kind: 'email', host: 'cbc-mail', port: 1025, secure: false, from: 'old@example.com', to: 'legacy@example.com, second@example.com' })
+  const encScript = `const c=require('crypto');const k=c.createHash('sha256').update(process.env.BACKUP_MASTER_KEY).digest();const iv=c.randomBytes(12);const ci=c.createCipheriv('aes-256-gcm',k,iv);const b=Buffer.concat([ci.update(${JSON.stringify(legacyCfg)}),ci.final()]);
+    const d=require('/app/node_modules/better-sqlite3')('/data/console.db');
+    d.prepare("INSERT INTO channels (id, workspace_id, name, kind, config_enc, on_failure, on_success, created_at) VALUES ('legacy-mail', ?, 'Old email', 'email', ?, 1, 0, ?)").run(${JSON.stringify(wsId)}, Buffer.concat([iv,ci.getAuthTag(),b]).toString('base64'), Date.now());
+    d.prepare('UPDATE workspace_settings SET emails_migrated = 0 WHERE workspace_id = ?').run(${JSON.stringify(wsId)})`
+  execSync(`docker exec -i ${CONTAINER} node -`, { input: encScript })
+  execSync(`docker restart ${CONTAINER}`)
+  for (let i = 0; i < 60; i++) {
+    if (await fetch(`${URL_}/api/health`).then((r) => r.ok, () => false)) break
+    await page.waitForTimeout(500)
+  }
+  await page.goto(`${URL_}/emails?tab=recipients`)
+  const migrated = dbGet(`SELECT externals FROM email_routes WHERE workspace_id = '${wsId}' AND type = 'backup_failed'`)
+  if (!migrated?.externals.includes('legacy@example.com') || !migrated.externals.includes('second@example.com')) throw new Error(`Channel not migrated: ${JSON.stringify(migrated)}`)
+  if (dbGet("SELECT COUNT(*) AS n FROM channels WHERE kind = 'email'").n !== 0) throw new Error('Legacy email channel still present')
+  if (dbGet(`SELECT email_smtp_enc FROM workspace_settings WHERE workspace_id = '${wsId}'`).email_smtp_enc) throw new Error('Same SMTP as the platform should not become a workspace override')
+  ok('legacy Email channel migrated on boot: its addresses became Backup failed/partial and Restore failed recipients')
+
+  // Recipients grid: add an external address to the digest
+  const digestRow = page.getByRole('row').filter({ hasText: 'Daily / weekly digest' })
+  await digestRow.getByRole('button', { name: /Add/ }).click()
+  await dialog().getByLabel('External addresses').fill('ops@example.com')
+  await dialog().getByRole('button', { name: 'Add', exact: true }).click()
+  await dialog().getByRole('button', { name: 'Save' }).click()
+  await digestRow.getByText('ops@example.com').waitFor()
+  // Roles are checkboxes: give Operators the "Backup partially failed" email
+  const partialRow = page.getByRole('row').filter({ hasText: 'Backup partially failed' })
+  await partialRow.getByRole('checkbox', { name: /Operators/ }).click()
+  for (let i = 0; i < 20 && !dbGet(`SELECT roles FROM email_routes WHERE workspace_id = '${wsId}' AND type = 'backup_partial'`)?.roles.includes('operator'); i++) await page.waitForTimeout(250)
+  if (!dbGet(`SELECT roles FROM email_routes WHERE workspace_id = '${wsId}' AND type = 'backup_partial'`).roles.includes('operator')) throw new Error('Role toggle not saved')
+  await shot('29-email-recipients')
+  ok('recipients grid: external address for the digest, Operators added to partial failures')
+
+  // Template editor: variables, unknown-variable guard, live preview, test send with inline logo
+  await page.getByRole('tab', { name: 'Templates' }).click()
+  await page.getByRole('listitem').filter({ has: page.getByText('Backup failed', { exact: true }) }).getByRole('link', { name: 'Edit' }).click()
+  await page.getByTestId('preview-subject').waitFor()
+  const subject = page.getByLabel('Subject')
+  await subject.fill('Custom {{ instance.name }} {{ nope }}')
+  await page.getByText('Unknown variable: nope').first().waitFor()
+  await page.getByRole('button', { name: 'Save' }).click()
+  await page.waitForTimeout(500)
+  if (dbGet(`SELECT 1 AS x FROM email_templates WHERE workspace_id = '${wsId}' AND type = 'backup_failed'`)) throw new Error('Template with an unknown variable was saved')
+  await subject.fill('Custom: {{ instance.name }} broke')
+  const heading = page.getByLabel('Heading')
+  await heading.click()
+  await heading.press('End')
+  await page.getByRole('button', { name: /^job\.name/ }).click()
+  if (!(await heading.inputValue()).endsWith('{{ job.name }}')) throw new Error(`Variable not inserted: ${await heading.inputValue()}`)
+  await page.getByTestId('preview-subject').filter({ hasText: 'Custom: shop-prod broke' }).waitFor()
+  const frame = page.frameLocator('iframe[title="Email preview"]')
+  await frame.getByText('Flying Web').first().waitFor()
+  await page.getByRole('tab', { name: 'Mobile' }).click()
+  await page.waitForFunction(() => document.querySelector('iframe[title="Email preview"]')?.getBoundingClientRect().width === 375, null, { timeout: 5000 })
+  await shot('30-email-editor')
+  await page.getByRole('tab', { name: 'Plain text' }).click()
+  await page.locator('pre').filter({ hasText: 'Nightly production' }).waitFor()
+  await page.getByRole('tab', { name: 'HTML', exact: true }).click()
+  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByText('Template saved').waitFor()
+  await page.getByRole('button', { name: 'Send test to me' }).click()
+  await page.getByText(`Test sent to ${EMAIL}`).waitFor()
+  const testMail = await waitMail((m) => m.Subject === '[Test] Custom: shop-prod broke', 'test email')
+  const full = await (await fetch(`${MAILPIT}/api/v1/message/${testMail.ID}`)).json()
+  if (!full.Inline?.some((a) => a.ContentID === 'logo' && a.ContentType === 'image/png')) throw new Error(`No inline PNG logo: ${JSON.stringify(full.Inline)}`)
+  if (!full.HTML.includes('cid:logo') || !full.Text.includes('Nightly production')) throw new Error('Test email missing HTML logo or plain-text part')
+  ok('template editor: unknown variable blocked, click-to-insert, live preview (desktop/mobile, text), test email with inline PNG logo')
+
+  // Owner-only full HTML: start from the design, scripts stripped on save; History → revert
+  await page.getByRole('tab', { name: 'Full HTML' }).click()
+  await page.getByRole('button', { name: 'Start from current design' }).click()
+  await page.getByText('Loaded the branded layout as HTML').waitFor()
+  await page.locator('.cm-content').click()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End')
+  await page.keyboard.type('<script>alert(1)</script><p onclick="x()">Extra paragraph</p>')
+  await frame.getByText('Extra paragraph').waitFor()
+  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByText('Template saved').waitFor()
+  const htmlRow = dbGet(`SELECT mode, content FROM email_templates WHERE workspace_id = '${wsId}' AND type = 'backup_failed'`)
+  if (htmlRow.mode !== 'html' || /<script|onclick/.test(htmlRow.content) || !htmlRow.content.includes('Extra paragraph')) throw new Error(`HTML not sanitised: ${htmlRow.content.slice(0, 200)}`)
+  await shot('31-email-html')
+  await page.getByRole('button', { name: 'History' }).click()
+  await dialog().getByRole('button', { name: 'Revert' }).first().click()
+  await page.getByText('Reverted').waitFor()
+  const reverted = dbGet(`SELECT mode, content FROM email_templates WHERE workspace_id = '${wsId}' AND type = 'backup_failed'`)
+  if (reverted.mode !== 'structured' || !reverted.content.includes('Custom: {{ instance.name }} broke')) throw new Error('Revert did not restore the structured version')
+  ok('full HTML (owner): scripts and handlers stripped on save; History → Revert back to the structured version')
+
+  // Branding
+  await page.goto(`${URL_}/emails?tab=branding`)
+  await page.waitForLoadState('networkidle')
+  await page.getByLabel('Accent colour', { exact: true }).fill('#0f766e')
+  await page.getByLabel('Footer text').fill('Flying Web Solutions · Dublin')
+  await page.getByLabel('Sender name').fill('Flying Web Backups')
+  await page.getByRole('button', { name: 'Save branding' }).click()
+  await page.getByText('Branding saved').waitFor()
+  const brand = dbGet(`SELECT email_accent, email_footer, email_sender_name FROM workspace_settings WHERE workspace_id = '${wsId}'`)
+  if (brand.email_accent !== '#0f766e' || brand.email_sender_name !== 'Flying Web Backups') throw new Error(`Branding not saved: ${JSON.stringify(brand)}`)
+
+  // Digest: owners by default + the external address; opting out stops it for me only
   await page.getByRole('link', { name: 'Settings' }).click()
   await pick(page.getByRole('combobox').filter({ hasText: 'Off' }), 'Daily at 08:00')
-  await page.getByLabel('Recipients').fill('ops@example.com')
   await page.getByRole('button', { name: 'Save digest' }).click()
   await page.getByText('Digest settings saved').waitFor()
   await page.reload()
   await page.getByRole('button', { name: 'Send test now' }).click()
   await page.getByText('Test digest sent').waitFor()
+  const isDigest = (to) => (m) => /backup digest/.test(m.Subject) && m.To.some((t) => t.Address === to)
+  const digestMail = await waitMail(isDigest(EMAIL), 'digest to owner')
+  await waitMail(isDigest('ops@example.com'), 'digest to external')
+  if (digestMail.From.Name !== 'Flying Web Backups' || digestMail.From.Address !== 'backups@example.com') throw new Error(`Wrong sender: ${JSON.stringify(digestMail.From)}`)
+  const digestFull = await (await fetch(`${MAILPIT}/api/v1/message/${digestMail.ID}`)).json()
+  if (!digestFull.HTML.includes('#0f766e') || !digestFull.HTML.includes('Flying Web Solutions · Dublin')) throw new Error('Digest missing branding')
+  await page.goto(`${URL_}/account`)
+  await page.getByRole('switch', { name: 'Flying Web: Daily / weekly digest' }).click()
+  await page.getByText('Daily / weekly digest emails off').waitFor()
+  await fetch(`${MAILPIT}/api/v1/messages`, { method: 'DELETE' })
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Send test now' }).click()
+  await page.getByText('Test digest sent').waitFor()
+  await waitMail(isDigest('ops@example.com'), 'digest to external after opt-out')
+  if ((await inbox()).some(isDigest(EMAIL))) throw new Error('Opted-out member still got the digest')
+  await page.goto(`${URL_}/account`)
+  await page.getByRole('switch', { name: 'Flying Web: Daily / weekly digest' }).click()
+  await page.getByText('Daily / weekly digest emails on').waitFor()
+  ok('digest: branded (accent, footer, sender name) to owners + external; opt-out in Account stops it for that member only')
+
   await page.getByRole('link', { name: 'Members' }).click()
   await page.getByRole('button', { name: 'Invite member' }).click()
   await dialog().getByLabel('Email').fill('emailed@example.com')
   await dialog().getByRole('button', { name: 'Create invitation' }).click()
   await dialog().getByText(/We emailed/).waitFor()
   await dialog().getByRole('button', { name: 'Done' }).click()
-  const mails = await (await fetch(`${env('MAILPIT', 'http://localhost:8025')}/api/v1/messages`)).json()
-  const subjects = mails.messages.map((m) => m.Subject)
-  if (!subjects.some((s) => /\[Flying Web\] Backup digest/.test(s))) throw new Error(`No digest email: ${subjects}`)
-  if (!subjects.some((s) => /invited to Flying Web/.test(s))) throw new Error(`No invitation email: ${subjects}`)
-  ok('digest email and invitation email delivered via platform SMTP')
+  const invite = await waitMail((m) => /invited to Flying Web/.test(m.Subject) && m.To.some((t) => t.Address === 'emailed@example.com'), 'invitation')
+  const inviteFull = await (await fetch(`${MAILPIT}/api/v1/message/${invite.ID}`)).json()
+  if (!/\/invite\/[\w-]+/.test(inviteFull.HTML)) throw new Error('Invitation email has no accept link')
+  ok('invitation email: branded template with the accept link')
+
+  // Platform defaults + sidebar version / GitHub link
+  await page.getByRole('link', { name: 'Workspaces & users' }).click()
+  await page.getByRole('listitem').filter({ has: page.getByText('No recent backup', { exact: true }) }).getByRole('link', { name: 'Edit' }).click()
+  await page.getByLabel('Subject').fill('⏰ Stale: {{ instance.name }}')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByText('Template saved').waitFor()
+  if (!dbGet("SELECT content FROM email_templates WHERE workspace_id = '' AND type = 'backup_stale'")?.content.includes('Stale:')) throw new Error('Platform default not saved')
+  const gh = page.getByRole('link', { name: 'Source code on GitHub' })
+  if ((await gh.getAttribute('href')) !== 'https://github.com/flyingwebie/convex-backup-console') throw new Error('GitHub link wrong')
+  await page.getByRole('link', { name: /^v\d+\.\d+\.\d+/ }).waitFor()
+  ok('platform default template edited; sidebar shows the version and the GitHub link')
 
   await page.getByRole('link', { name: 'Storage' }).click()
   await page.getByText(/Stored data, last \d+ days/).waitFor()
