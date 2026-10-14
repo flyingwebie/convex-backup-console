@@ -1,6 +1,7 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
 import { ArrowRight, Bell, Database, HardDrive, KeyRound, Play, ShieldAlert, TriangleAlert } from 'lucide-react'
+import { InstanceKindBadge } from '~/components/instance-kind'
 import { PageBody, PageHeader } from '~/components/page'
 import { StatusBadge } from '~/components/status'
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
@@ -145,7 +146,7 @@ function Overview() {
                   return (
                     <TableRow key={i.id}>
                       <TableCell>
-                        <div className="font-medium">{i.name}</div>
+                        <div className="flex items-center gap-2 font-medium">{i.name} <InstanceKindBadge kind={i.kind} type={i.deployment_type} /></div>
                         <div className="text-muted-foreground text-xs">{i.url}</div>
                       </TableCell>
                       <TableCell>

@@ -36,6 +36,10 @@ In the console (http://localhost:3078):
 - R2 stand-in: endpoint `http://cbc-r2:9000`, region `us-east-1`, bucket `convex-backups-test`, path-style on.
 - Local destination: `/data/backups`.
 
+Convex Cloud tests need a mock of `api.convex.dev` (`e2e/mock-convex-api.mjs`, run as container `cbc-bigbrain`):
+run the console with `-e CONVEX_PROVISION_HOST=http://cbc-bigbrain:8080` and pass
+`CLOUD_KEY="prod:self-hosted-convex|<secret part of A's admin key>"` to `e2e/e2e.mjs`.
+
 Compare instances after a restore (run it against each one):
 
 ```bash

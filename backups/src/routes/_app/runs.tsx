@@ -268,7 +268,11 @@ function RestoreDialog({ data, source, onClose, onDone }: { data: Data; source: 
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {data.instances.map((i) => (
-                    <SelectItem key={i.id} value={i.id}>{i.name}{i.id === source.run.instance_id ? ' (original)' : ''}</SelectItem>
+                    <SelectItem key={i.id} value={i.id}>
+                      {i.name}
+                      {i.kind === 'cloud' ? ` (Cloud ${i.deployment_type ?? ''})` : ''}
+                      {i.id === source.run.instance_id ? ' — original' : ''}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -283,6 +287,16 @@ function RestoreDialog({ data, source, onClose, onDone }: { data: Data; source: 
               </Select>
               <FieldDescription>{MODES[mode].hint}</FieldDescription>
             </Field>
+            {target?.kind === 'cloud' && target.deployment_type === 'prod' && (
+              <Alert variant="destructive">
+                <TriangleAlert />
+                <AlertTitle>Convex Cloud production deployment</AlertTitle>
+                <AlertDescription>
+                  {target.deployment_name} serves live users. Convex Cloud also keeps its own backups (dashboard → Backups) — consider restoring into a
+                  development deployment first.
+                </AlertDescription>
+              </Alert>
+            )}
             {mode !== 'requireEmpty' && (
               <Alert variant="destructive">
                 <TriangleAlert />

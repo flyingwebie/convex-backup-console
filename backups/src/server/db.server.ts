@@ -160,6 +160,10 @@ function migrate(conn: Database.Database) {
 
   for (const table of ['instances', 'destinations', 'jobs', 'channels', 'runs', 'restores', 'audit']) add(table, 'workspace_id', 'TEXT')
   for (const table of ['instances', 'destinations', 'jobs']) add(table, 'deleted_at', 'INTEGER')
+  // Convex Cloud support: kind = 'self_hosted' | 'cloud'; cloud instances keep the deployment name/type from the deploy key.
+  add('instances', 'kind', "TEXT NOT NULL DEFAULT 'self_hosted'")
+  add('instances', 'deployment_name', 'TEXT')
+  add('instances', 'deployment_type', 'TEXT')
   conn.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS instances_ws_name ON instances (workspace_id, name) WHERE deleted_at IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS destinations_ws_name ON destinations (workspace_id, name) WHERE deleted_at IS NULL;

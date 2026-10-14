@@ -68,3 +68,20 @@ Not testable locally: Telegram (needs api.telegram.org), real R2/Discord/Slack e
 | Workspace deletion | ✅ deleted workspace disappears from the switcher; Platform shows it as Deleted and restores it |
 
 `testing/local/e2e/e2e.mjs`: **22/22** checks passed on a fresh console.
+
+## Local Docker run #4 — Convex Cloud (2026-10-14)
+
+Cloud deployments speak the same HTTP API; the differences are the deploy key and URL lookup through
+`api.convex.dev/api/deployment/url_for_key`. Tested locally with a mock of that endpoint
+(`CONVEX_PROVISION_HOST`) and a Cloud-format key (`prod:<instance>|…`), which the backend accepts:
+
+| Check | Result |
+|---|---|
+| Deploy key parsing | ✅ unit tests: prod/dev/preview-deployment accepted; project and preview-creation keys rejected with clear messages |
+| Bad key | ✅ 401 from the lookup API → "Convex rejected this deploy key" (the real `api.convex.dev` returns 401 for invalid keys) |
+| Connect | ✅ URL looked up from the key; instance shown as "Cloud · prod" |
+| Backup | ✅ job on the Cloud instance ran successfully with the deploy key |
+| Restore guard | ✅ extra warning when the target is a Cloud production deployment |
+
+Not tested: a real Convex Cloud deployment (needs a deploy key from your account).
+`e2e.mjs`: **26/26** checks passed.

@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { env } from './env.server'
 // Minimal client for the Convex backend's admin HTTP API (the same endpoints `npx convex export` uses).
 
 export type ExportState =
@@ -164,4 +165,41 @@ function toBigInt(value: unknown): bigint {
 function describeNetworkError(err: unknown): string {
   const cause = (err as { cause?: { code?: string; message?: string } })?.cause
   return cause?.code ?? cause?.message ?? (err instanceof Error ? err.message : String(err))
+}
+
+// ── Convex Cloud ─────────────────────────────────────────────
+
+export type DeployKeyInfo = { type: 'prod' | 'dev' | 'preview' | 'custom'; deploymentName: string }
+
+/**
+ * Validates a Convex Cloud deploy key. Only deployment-specific keys can back up a deployment:
+ * `prod:<name>|…`, `dev:<name>|…`, `preview:<name>|…`. Project keys and preview-creation keys can't.
+ */
+export function parseDeployKey(key: string): DeployKeyInfo {
+  const [prefix, secret] = key.split('|')
+  if (!secret) throw new Error('That is not a Convex deploy key (expected "prod:your-deployment|…")')
+  const parts = prefix.split(':')
+  if (parts[0] === 'project') throw new Error('This is a project key. Generate a deploy key for a specific deployment instead.')
+  if (parts[0] === 'preview' && parts.length === 3) throw new Error('This is a preview deploy key (it creates previews). Use a deploy key of one specific deployment.')
+  if (parts.length !== 2 || !['prod', 'dev', 'preview', 'custom'].includes(parts[0])) {
+    throw new Error('Unrecognised deploy key format (expected "prod:your-deployment|…" or "dev:…")')
+  }
+  return { type: parts[0] as DeployKeyInfo['type'], deploymentName: parts[1] }
+}
+
+/** Asks Convex which URL serves the deployment behind this deploy key (handles regions and custom domains). */
+export async function resolveCloudUrl(deployKey: string): Promise<string> {
+  const res = await fetch(`${env.provisionHost}/api/deployment/url_for_key`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Convex-Client': 'convex-backup-console' },
+    body: JSON.stringify({ deployKey }),
+    signal: AbortSignal.timeout(15_000),
+  }).catch((err: unknown) => {
+    throw new Error(`Cannot reach Convex (${env.provisionHost}): ${err instanceof Error ? err.message : String(err)}`)
+  })
+  if (res.status === 401 || res.status === 403) throw new Error('Convex rejected this deploy key (revoked or mistyped?)')
+  if (!res.ok) throw new Error(`Convex could not resolve the deployment URL (${res.status})`)
+  const url = (await res.json()) as unknown
+  if (typeof url !== 'string' || !/^https?:\/\//.test(url)) throw new Error('Unexpected response from Convex when resolving the deployment URL')
+  return url.replace(/\/+$/, '')
 }

@@ -6,7 +6,7 @@ import { can, ROLES } from '~/lib/permissions'
 import { auth, createUserWithPassword } from './auth.server'
 import { isInstanceBusy, startJob } from './backup.server'
 import { ensureBooted } from './boot.server'
-import { ConvexAdmin } from './convex.server'
+import { ConvexAdmin, parseDeployKey, resolveCloudUrl } from './convex.server'
 import { decrypt, encrypt } from './crypto.server'
 import { audit, db } from './db.server'
 import { createEncryptionKey, encryptionIdentity, encryptionRecipient } from './encryption.server'
@@ -113,10 +113,15 @@ export type RunView = ReturnType<typeof listRuns>[number]
 
 function listInstances(ws: string) {
   return (
-    db().prepare('SELECT id, name, url, created_at FROM instances WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY name').all(ws) as {
+    db()
+      .prepare('SELECT id, name, url, kind, deployment_name, deployment_type, created_at FROM instances WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY name')
+      .all(ws) as {
       id: string
       name: string
       url: string
+      kind: 'self_hosted' | 'cloud'
+      deployment_name: string | null
+      deployment_type: string | null
       created_at: number
     }[]
   ).map((i) => {
@@ -277,17 +282,33 @@ export const getAudit = createServerFn({ method: 'GET' }).handler(async () => {
 
 // ── Instances ────────────────────────────────────────────────
 
-const instanceInput = z.object({
-  name: z.string().trim().min(1).max(80),
-  url: z.url().transform((u) => u.replace(/\/+$/, '')),
-  adminKey: z.string().trim().min(10),
-})
+const name = z.string().trim().min(1).max(80)
+const url = z.url().transform((u) => u.replace(/\/+$/, ''))
+const instanceInput = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('self_hosted'), name, url, adminKey: z.string().trim().min(10) }),
+  // Cloud: the URL is looked up from the deploy key unless given (e.g. a custom domain).
+  z.object({ kind: z.literal('cloud'), name, deployKey: z.string().trim().min(10), url: url.optional().or(z.literal('').transform(() => undefined)) }),
+])
 
 async function probe(url: string, adminKey: string) {
   const convex = new ConvexAdmin(url, adminKey)
   const version = await convex.version()
-  await convex.latestExport() // proves the admin key works
+  await convex.latestExport() // proves the key works and may read backups
   return version
+}
+
+/** Validates credentials against the deployment and returns what to store. */
+async function connect(input: z.infer<typeof instanceInput>) {
+  if (input.kind === 'self_hosted') {
+    return { kind: input.kind, url: input.url, key: input.adminKey, deploymentName: null, deploymentType: null, version: await probe(input.url, input.adminKey) }
+  }
+  const info = parseDeployKey(input.deployKey)
+  const resolved = input.url ?? (await resolveCloudUrl(input.deployKey))
+  const version = await probe(resolved, input.deployKey).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(/40[13]/.test(msg) ? `The deploy key was rejected by ${resolved} — it may lack backup permissions or be revoked` : msg)
+  })
+  return { kind: input.kind, url: resolved, key: input.deployKey, deploymentName: info.deploymentName, deploymentType: info.type, version }
 }
 
 function uniqueName(err: unknown, what: string): never {
@@ -299,36 +320,55 @@ export const addInstance = createServerFn({ method: 'POST' })
   .validator(parse(instanceInput))
   .handler(async ({ data }) => {
     const { ws, user } = await requireWorkspace('manage')
-    const version = await probe(data.url, data.adminKey)
+    const c = await connect(data)
     const id = randomUUID()
     try {
       db()
-        .prepare('INSERT INTO instances (id, workspace_id, name, url, admin_key_enc, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(id, ws.id, data.name, data.url, encrypt(data.adminKey), Date.now())
+        .prepare(
+          `INSERT INTO instances (id, workspace_id, name, url, admin_key_enc, kind, deployment_name, deployment_type, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, ws.id, data.name, c.url, encrypt(c.key), c.kind, c.deploymentName, c.deploymentType, Date.now())
     } catch (err) {
       uniqueName(err, 'instance')
     }
-    audit(ws.id, user.email, 'instance.created', { id, name: data.name, url: data.url })
-    return { id, version }
+    audit(ws.id, user.email, 'instance.created', { id, name: data.name, kind: c.kind, url: c.url, deployment: c.deploymentName })
+    return { id, version: c.version, url: c.url }
   })
 
 export const updateInstance = createServerFn({ method: 'POST' })
-  .validator(parse(z.object({ id: z.string(), name: instanceInput.shape.name, url: instanceInput.shape.url, adminKey: z.string().trim().optional() })))
+  .validator(
+    parse(
+      z.object({
+        id: z.string(),
+        name,
+        // Self-hosted: URL (+ optional new admin key). Cloud: optional new deploy key and/or URL override.
+        url: z.string().trim().optional(),
+        key: z.string().trim().optional(),
+      }),
+    ),
+  )
   .handler(async ({ data }) => {
     const { ws, user } = await requireWorkspace('manage')
-    const row = db().prepare('SELECT admin_key_enc FROM instances WHERE id = ? AND workspace_id = ?').get(data.id, ws.id) as
-      | { admin_key_enc: string }
+    const row = db().prepare('SELECT kind, url, admin_key_enc FROM instances WHERE id = ? AND workspace_id = ?').get(data.id, ws.id) as
+      | { kind: 'self_hosted' | 'cloud'; url: string; admin_key_enc: string }
       | undefined
     if (!row) throw new Error('Instance not found')
-    const key = data.adminKey || decrypt(row.admin_key_enc)
-    const version = await probe(data.url, key)
+    const key = data.key || decrypt(row.admin_key_enc)
+    const c = await connect(
+      row.kind === 'cloud'
+        ? { kind: 'cloud', name: data.name, deployKey: key, url: data.url ? url.parse(data.url) : data.key ? undefined : row.url }
+        : { kind: 'self_hosted', name: data.name, url: url.parse(data.url || row.url), adminKey: key },
+    )
     try {
-      db().prepare('UPDATE instances SET name = ?, url = ?, admin_key_enc = ? WHERE id = ?').run(data.name, data.url, encrypt(key), data.id)
+      db()
+        .prepare('UPDATE instances SET name = ?, url = ?, admin_key_enc = ?, deployment_name = ?, deployment_type = ? WHERE id = ?')
+        .run(data.name, c.url, encrypt(c.key), c.deploymentName, c.deploymentType, data.id)
     } catch (err) {
       uniqueName(err, 'instance')
     }
-    audit(ws.id, user.email, 'instance.updated', { id: data.id, name: data.name, url: data.url, keyChanged: Boolean(data.adminKey) })
-    return { version }
+    audit(ws.id, user.email, 'instance.updated', { id: data.id, name: data.name, url: c.url, keyChanged: Boolean(data.key) })
+    return { version: c.version }
   })
 
 export const testInstance = createServerFn({ method: 'POST' })
