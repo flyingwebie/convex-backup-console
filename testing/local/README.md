@@ -56,3 +56,11 @@ for n in a b; do docker compose -p convex-$n down -v; done
 
 `compose.override.yaml` publishes the API port and runs Convex's cleanup every 30s
 (`SYSTEM_TABLE_CLEANUP_FREQUENCY_SECONDS`) so export purging shows up quickly. Don't use it in production.
+
+## Demo data & marketing images
+
+```bash
+cd testing/local/e2e
+node demo/screenshots.mjs        # fresh console + fake "Acme Agency" data → docs/images/screens/*.png
+node demo/render-marketing.mjs   # hero, social preview, feature cards → docs/images/*.png
+```

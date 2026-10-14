@@ -120,7 +120,7 @@ export async function bootstrapWorkspaces() {
       if (u.id === owner.id) continue
       await auth().api.addMember({ body: { userId: u.id, role: 'owner', organizationId: workspaceId } })
     }
-    console.log('[workspaces] created "Default" workspace for existing data')
+    console.log(legacy ? '[workspaces] created "Default" workspace for existing data' : '[workspaces] created the "Default" workspace')
   }
   db().transaction(() => {
     for (const t of ['instances', 'destinations', 'jobs', 'channels', 'runs', 'restores', 'audit']) {

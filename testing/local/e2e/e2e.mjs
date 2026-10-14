@@ -64,16 +64,19 @@ try {
   await shot('01-login')
   await page.getByLabel('Email').fill(EMAIL)
   // OAuth buttons appear for configured providers and redirect to the right IdP
-  for (const [name, host] of [['Google', 'accounts.google.com'], ['GitHub', 'github.com'], ['Microsoft', 'login.microsoftonline.com']]) {
+  const IDPS = [['Google', 'accounts.google.com'], ['GitHub', 'github.com'], ['Microsoft', 'login.microsoftonline.com']]
+  // Keep the IdPs blocked for the whole check so the browser never actually lands on them.
+  for (const [, host] of IDPS) await page.route(`**://${host}/**`, (r) => r.abort())
+  for (const [name, host] of IDPS) {
     const req = page.waitForRequest((r) => r.url().includes(host), { timeout: 15_000 })
-    await page.route(`**://${host}/**`, (r) => r.abort())
     await page.getByRole('button', { name: `Continue with ${name}` }).click()
     const url = new URL((await req).url())
     if (!url.searchParams.get('client_id')?.startsWith('test-')) throw new Error(`${name}: missing client_id`)
     if (!url.searchParams.get('redirect_uri')?.endsWith(`/api/auth/callback/${name.toLowerCase()}`)) throw new Error(`${name}: wrong redirect_uri`)
-    await page.unroute(`**://${host}/**`)
     await page.goto(`${URL_}/login`)
+    await page.getByRole('button', { name: 'Continue with Google' }).waitFor()
   }
+  for (const [, host] of IDPS) await page.unroute(`**://${host}/**`)
   ok('Google, GitHub and Microsoft buttons redirect to their IdP with our client id and callback')
   await page.getByLabel('Email').fill(EMAIL)
   await page.getByLabel('Password').fill('wrong-password-1')

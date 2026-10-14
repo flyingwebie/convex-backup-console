@@ -85,3 +85,21 @@ Cloud deployments speak the same HTTP API; the differences are the deploy key an
 
 Not tested: a real Convex Cloud deployment (needs a deploy key from your account).
 `e2e.mjs`: **26/26** checks passed.
+
+## Local Docker run #5 — auth, strong additions, templates (2026-10-14)
+
+`testing/local/e2e/e2e.mjs`: **38/38** on a fresh console. Highlights:
+
+| Area | Checks |
+|---|---|
+| Sign-in | Google/GitHub/Microsoft buttons redirect to the IdP with our client id + callback; unverified (social-style) sessions are stepped up on `/verify`; passkey registered and used to sign in (Chromium virtual authenticator) |
+| Object Lock | Refused on a bucket without it; locked copies survive retention; deleting a locked version is `AccessDenied` (RustFS) |
+| Contents | Manifest (2 tables, 500 rows, 20 files) and comparison with the previous backup |
+| Partial restore | Only the selected table is replaced. **Bug found and fixed:** the table index must be filtered too, or Convex wipes unselected tables on "replace" |
+| Scrubbing | Titles become `[redacted]` in the target. **Bug found and fixed:** lossless JSON is required, because Convex writes floats as `123.0` and plain JSON round-trips them into Int64 |
+| API & CI | Read token → 403 on run, bad token → 401; the real GitHub Action script triggered a backup and waited for `ok` |
+| Monitoring | Status URL JSON (200/503), audit CSV, digest + invitation emails via SMTP (Mailpit), storage dashboard |
+
+Coolify templates: both validate with `docker compose config`; the console template boots, seeds the admin and serves the login page.
+
+Not testable locally: real Google/GitHub/Microsoft logins, real R2/B2 Object Lock, Telegram/Slack/Discord endpoints.

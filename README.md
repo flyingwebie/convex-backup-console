@@ -1,387 +1,254 @@
-# Convex Self-Hosted on Coolify — Postgres + RustFS + Off-site Backups
+<div align="center">
 
-A single `docker-compose.yaml` that deploys a production-grade, fully self-hosted [Convex](https://github.com/get-convex/convex-backend) stack on [Coolify](https://coolify.io):
+<img src="coolify/svgs/convex-backup-console.svg" width="72" alt="Convex Backup Console logo" />
 
-| Service          | Role                                                                                  |
-| ---------------- | ------------------------------------------------------------------------------------- |
-| `backend`        | Convex backend (API on `:3210`, HTTP actions on `:3211`)                              |
-| `dashboard`      | Convex dashboard (`:6791`)                                                            |
-| `postgres`       | PostgreSQL 17 — replaces the default embedded SQLite as the system of record          |
-| `rustfs`         | [RustFS](https://rustfs.com) — S3-compatible object storage for Convex file storage, exports, modules and search indexes |
-| `rustfs-init`    | One-shot job that creates the 5 buckets Convex needs                                  |
-| `backups`        | [convex-self-hosted-backups](https://github.com/orenaksakal/convex-self-hosted-backups) — scheduled exports to **external** AWS S3 or Cloudflare R2 |
-| `export-cleanup` | Daily prune of leftover export zips in the Convex data volume                         |
+# Convex Backup Console
 
-## Architecture
+**Backups for Convex you can actually restore.**
+
+Scheduled, encrypted, off-site backups for **self-hosted Convex** and **Convex Cloud**, with
+point-and-click restores, ransomware-proof storage and a console your whole team can use.
+Plus a production-ready **Convex-on-Coolify** template to run the instances themselves.
+
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Deploy on Coolify](https://img.shields.io/badge/deploy%20on-Coolify-8C52FF?logo=coolify&logoColor=white)](coolify/README.md)
+[![Convex](https://img.shields.io/badge/Convex-self--hosted%20%26%20Cloud-EE342F)](https://convex.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-TanStack%20Start-3178C6?logo=typescript&logoColor=white)](backups)
+[![e2e](https://img.shields.io/badge/e2e-38%20checks-2ea44f)](testing/TESTING.md)
+
+[Quick start](#-quick-start) · [Features](#-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Security](#-security) · [FAQ](#-faq)
+
+<img src="docs/images/hero.png" alt="Convex Backup Console" width="100%" />
+
+</div>
+
+---
+
+## Why
+
+Convex's snapshot export is great, but a backup strategy needs more than `npx convex export` in a cron job:
+
+- **Off-site, versioned and immutable copies.** A backup on the same server, or one an attacker can delete, isn't a backup.
+- **Encryption you control**, so a leaked bucket doesn't leak your users' data.
+- **Restores that are rehearsed and safe:** into a staging copy, one table at a time, with personal data scrubbed.
+- **Visibility:** know when a backup *didn't* happen, not just when one failed.
+- **One place for every project and client**, with proper access control.
+
+Convex Backup Console does all of that in a single container.
+
+## ✨ Features
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/feature-restore.png" alt="Restore" /></td>
+<td width="50%"><img src="docs/images/feature-storage.png" alt="Storage" /></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/images/feature-teams.png" alt="Teams" /></td>
+</tr>
+</table>
+
+**Backups**
+- 🔁 **Manual, cron or API-triggered** jobs, one instance → many destinations, including file storage.
+- ☁️ **Self-hosted Convex** (URL + admin key) **and Convex Cloud** (deploy key; URL looked up automatically).
+- 🔐 **age encryption** per workspace: decryptable offline with the standard `age` CLI.
+- 🗄️ **S3-compatible destinations** (Cloudflare R2, AWS S3, Backblaze B2, Wasabi, MinIO, RustFS) and local volumes.
+- 🧱 **S3 Object Lock:** backups can't be deleted or overwritten for N days, not even with stolen credentials.
+- 🧹 **GFS retention** (keep-last + daily/weekly/monthly), **exports cleaned up** on the source automatically.
+- 🧾 **Manifests:** tables, row counts, files and SHA-256 per backup, compared with the previous one.
+
+**Restores**
+- ↺ Into the **same or another instance**, in four modes (full, replace, append, empty-only).
+- ✂️ **Partial restores:** only the tables you pick; everything else stays untouched.
+- 🕶️ **Scrubbed staging copies:** fake emails, names and phones; redaction; hashing; consistent within a restore.
+- ⬇️ **Download** any backup, decrypted or as the raw `.age` file.
+
+**Operations**
+- 📈 **Overview & storage dashboard:** health per instance, growth chart, monthly cost estimate.
+- 🔔 **Alerts:** Slack, Discord, Telegram, email, webhook; daily/weekly **digest emails**.
+- 🩺 **Status URL** for Uptime Kuma, Better Stack and UptimeRobot (200 healthy / 503 not).
+- 🚀 **REST API + GitHub Action:** back up right before `npx convex deploy`.
+- 🗑️ **Trash & deletion policy:** restore deleted items for N days; decide whether their backups go too.
+- 📜 **Audit log** of every action, exportable as CSV.
+
+**Teams**
+- 🏢 **Workspaces**, e.g. one per client, each with its own logo, timezone, keys, alerts and members.
+- 👥 **Roles:** Owner · Admin · Operator (run and download, no restore) · Viewer (read-only).
+- 🔑 **Mandatory 2FA** (authenticator or passkey), **Google / GitHub / Microsoft** sign-in, invite-only accounts.
+- 🛡️ Session management, sign out everywhere, admin 2FA reset, login rate limiting.
+
+## 🚀 Quick start
+
+### Coolify (recommended)
+
+1. **+ New → Docker Compose Empty** → paste [`coolify/templates/convex-backup-console.yaml`](coolify/templates/convex-backup-console.yaml).
+2. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD`. Coolify generates the domain and the secrets.
+3. **Deploy**, sign in, enrol 2FA, then create your encryption key in **Workspace → Settings**.
+
+> **Save `SERVICE_PASSWORD_64_MASTERKEY` in your password manager.** It encrypts every stored key and secret.
+
+Full guide, including OAuth setup: [`coolify/README.md`](coolify/README.md).
+
+### Any Docker host
+
+```bash
+docker run -d --name convex-backups -p 3000:3000 \
+  -v convex-backups:/data --read-only --tmpfs /tmp \
+  -e PUBLIC_URL=https://backups.example.com \
+  -e BACKUP_MASTER_KEY="$(openssl rand -base64 48)" \
+  -e BETTER_AUTH_SECRET="$(openssl rand -base64 48)" \
+  -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='a-long-password' \
+  ghcr.io/flyingwebie/convex-backup-console:latest
+```
+
+Put it behind HTTPS (Traefik, Caddy, Nginx or a Cloudflare Tunnel; see [`backups/docker-compose.tunnel.yaml`](backups/docker-compose.tunnel.yaml)).
+
+### Then
+
+| Step | Where |
+|---|---|
+| Add a **self-hosted** instance: API URL + `./generate_admin_key.sh` output | Instances → Add instance |
+| Add a **Convex Cloud** deployment: a production or dev **deploy key** | Instances → Add instance → Convex Cloud ([guide](backups/README.md#back-up-a-convex-cloud-deployment)) |
+| Add a destination (R2, S3, B2…), optionally with Object Lock | Destinations |
+| Create a job: schedule, retention, encryption | Jobs |
+| Get alerts | Notifications |
+
+### Need a Convex instance first?
+
+[`coolify/templates/convex.yaml`](coolify/templates/convex.yaml) deploys self-hosted Convex with **Postgres** and
+**RustFS** (S3) storage on Coolify. The detailed walkthrough is in [`docs/convex-on-coolify.md`](docs/convex-on-coolify.md).
+
+## 🖼️ Screenshots
+
+| | |
+|---|---|
+| ![Overview](docs/images/screens/overview.png) **Overview:** health of every instance | ![Runs](docs/images/screens/runs.png) **Runs:** every backup and its copies |
+| ![Contents](docs/images/screens/contents.png) **Contents:** tables, rows, changes since last backup | ![Restore](docs/images/screens/restore.png) **Restore:** pick target, mode, tables, scrubbing |
+| ![Storage](docs/images/screens/storage.png) **Storage:** growth and monthly cost | ![Workspace](docs/images/screens/workspace.png) **Workspace settings:** branding, defaults, policies |
+| ![Destinations](docs/images/screens/destinations.png) **Destinations** with Object Lock | ![Members](docs/images/screens/members.png) **Members & roles** |
+| ![Login](docs/images/screens/login.png) **Sign-in:** password, Google, GitHub, Microsoft, passkeys | ![Dark mode](docs/images/screens/overview-dark.png) **Dark mode** |
+
+## 🧠 How it works
 
 ```mermaid
-flowchart TB
-    subgraph clients["🌍 Outside world"]
-        APP["💻 Your app / CLI<br/>npx convex dev · deploy"]
-        BROWSER["🧑‍💻 Browser<br/>Dashboard UI"]
-        WEBHOOK["🔔 Webhooks / HTTP clients"]
-    end
-
-    subgraph traefik["🚦 Coolify / Traefik (HTTPS :443)"]
-        D3210["backend.example.com → :3210"]
-        D3211["site.example.com → :3211"]
-        D6791["dashboard.example.com → :6791"]
-        D9000["(optional) s3.example.com → :9000"]
-    end
-
-    subgraph server["🖥️ Coolify server — internal Docker network"]
-        BACKEND["⚡ backend<br/>Convex API :3210<br/>HTTP actions :3211"]
-        DASH["📊 dashboard<br/>:6791"]
-        PG[("🐘 postgres<br/>system of record<br/>📦 postgres-data")]
-        RUSTFS[("🪣 rustfs<br/>S3 API :9000 · console :9001<br/>📦 rustfs-data")]
-        INIT["🛠️ rustfs-init<br/>one-shot: creates 5 buckets"]
-        BACKUPS["⏰ backups<br/>hourly · daily · weekly · monthly"]
-        CLEANUP["🧹 export-cleanup<br/>daily prune<br/>📦 convex-data"]
-    end
-
-    subgraph offsite["☁️ Off-site storage"]
-        R2["🌩️ Cloudflare R2 / AWS S3<br/>backup zips + retention"]
-    end
-
-    APP -->|"WebSocket + HTTPS"| D3210 --> BACKEND
-    WEBHOOK --> D3211 --> BACKEND
-    BROWSER --> D6791 --> DASH
-    D9000 -.->|"optional ⚠️"| RUSTFS
-
-    DASH -->|"admin key 🔑"| BACKEND
-    BACKEND -->|"tables · documents · indexes"| PG
-    BACKEND -->|"files · modules · search · exports<br/>http://rustfs:9000"| RUSTFS
-    INIT -.->|"🪣 create buckets on first boot"| RUSTFS
-    BACKUPS -->|"npx convex export 📤"| BACKEND
-    BACKUPS -->|"upload zip ⬆️"| R2
-    CLEANUP -.->|"rm exports 🗑️"| BACKEND
+flowchart LR
+  subgraph Sources
+    SH[Self-hosted Convex<br/>URL + admin key]
+    CC[Convex Cloud<br/>deploy key]
+  end
+  subgraph Console[Convex Backup Console · one container]
+    S[Scheduler / API / UI] --> X[Export → manifest → age encrypt]
+    R[Restore: filter tables · scrub PII] --> I[Convex import API]
+    DB[(SQLite · secrets encrypted<br/>with BACKUP_MASTER_KEY)]
+  end
+  SH & CC -- snapshot export --> X
+  X --> D1[(Cloudflare R2)]
+  X --> D2[(S3 / B2 with Object Lock)]
+  X --> D3[(Local volume)]
+  D1 & D2 & D3 --> R
+  I --> SH & CC
+  X -. alerts & digests .-> N[Slack · Discord · Telegram · Email · Webhook]
 ```
 
-Solid arrows = runtime traffic · dashed = one-shot or maintenance jobs. Everything inside the server box talks over the private Docker network; only the Traefik domains are public.
+1. A job asks the instance for a **snapshot export** through Convex's admin HTTP API, the same API `npx convex export` uses.
+2. The console downloads it, records a **manifest** (tables, row counts, files, SHA-256) and **encrypts** it with the workspace's age key.
+3. The archive is uploaded to every destination (with **Object Lock** where configured), then **retention** prunes old copies and the export is removed from the source.
+4. A **restore** downloads and decrypts a copy, optionally **filters tables** or **scrubs** personal data, and runs Convex's import with your chosen mode.
 
-
-**Why external backups?** RustFS lives on the same server as Convex. If the server dies, so does your "backup". The `backups` service ships full `npx convex export` snapshots (database + file storage) off-site to AWS S3 or Cloudflare R2 on hourly / daily / weekly / monthly schedules with automatic retention pruning.
-
----
-
-## 1. Deploy on Coolify
-
-### 1.1 Create the resource
-
-1. In Coolify: **+ New Resource → Docker Compose** (empty), paste the contents of `docker-compose.yaml` (or point Coolify at a Git repo containing it).
-2. Coolify parses the file and auto-generates the *magic variables*:
-   - `SERVICE_USER_POSTGRES` / `SERVICE_PASSWORD_POSTGRES`
-   - `SERVICE_USER_RUSTFS` / `SERVICE_PASSWORD_RUSTFS`
-   - `SERVICE_HEX_64_SECRET` (the Convex instance secret)
-   - `SERVICE_URL_*` FQDNs for each exposed port
-
-### 1.2 Assign domains
-
-Three separate HTTPS domains are **required** — Convex clients refuse plain HTTP, and the API (`3210`) and HTTP actions (`3211`) must be reachable on distinct hostnames:
-
-| Variable                     | Example domain                     | Container port | Notes                              |
-| ---------------------------- | ----------------------------------- | -------------- | ---------------------------------- |
-| `SERVICE_URL_BACKEND_3210`   | `https://backend.example.com`  | `3210`         | Convex API (`CONVEX_CLOUD_ORIGIN`) |
-| `SERVICE_URL_SITE_3211`      | `https://site.example.com`     | `3211`         | HTTP actions (`CONVEX_SITE_ORIGIN`)|
-| `SERVICE_URL_DASHBOARD_6791` | `https://dashboard.example.com`| `6791`         | Dashboard                          |
-| `SERVICE_URL_RUSTFS_9000`    | `https://s3.example.com`       | `9000`         | *Optional* — RustFS S3 API         |
-| `SERVICE_URL_CONSOLE_9001`   | `https://s3-console.example.com`| `9001`        | *Optional* — RustFS admin console  |
-
-⚠️ **Pitfall: Coolify often only generates domains for `backend:3210` and `dashboard:6791`, silently skipping the `3211` site domain.** Since ports `3210` and `3211` both live on the **same `backend` container**, you must attach **two domains to the Backend service**, each with an explicit port mapping. In Coolify → your resource → **Backend** service → **Domains** field, enter both, comma-separated:
-
-```
-https://backend.example.com:3210,https://site.example.com:3211
-```
-
-(The `:3210` / `:3211` suffix tells Coolify's Traefik which container port to route each domain to — the public URLs remain standard `443` HTTPS.)
-
-After saving, verify that the container env got populated correctly and **redeploy**:
-
-- `CONVEX_CLOUD_ORIGIN` → the `3210` domain
-- `CONVEX_SITE_ORIGIN` → the `3211` domain
-
-If Coolify didn't populate `SERVICE_URL_SITE`, set `CONVEX_SITE_ORIGIN` manually in the environment variables. You can check what the running backend actually sees with:
+### Recover without the console
 
 ```bash
-docker compose exec backend env | grep -E 'CONVEX_(CLOUD|SITE)_ORIGIN'
+age -d -i convex-backups-age-key.txt backup.zip.age > backup.zip   # key from Workspace → Settings
+npx convex import --replace-all backup.zip                           # into any Convex deployment
 ```
 
-> **No trailing slashes anywhere.** `https://backend.example.com` — not `https://backend.example.com/`. The Convex CLI concatenates paths onto these URLs, and a trailing slash causes silent `Retrying request...` loops in `npx convex dev` / `deploy`.
+## 🔐 Security
 
-#### RustFS domains — should you expose them?
+| Area | How |
+|---|---|
+| Sign-in | Invite-only. Password (12+ characters) or Google / GitHub / Microsoft; **second factor always required** (TOTP or passkey), including after social sign-in |
+| Sessions | 24h, HttpOnly cookies, per-session factor tracking, list/revoke, sign out everywhere |
+| Brute force | 5 sign-in / 2FA attempts per minute per IP (Cloudflare-aware) |
+| Secrets at rest | Admin keys, deploy keys, S3 secrets, webhook URLs and age keys are encrypted with AES-256-GCM under `BACKUP_MASTER_KEY` |
+| Backups at rest | age (X25519) per workspace; S3 Object Lock for immutability |
+| Isolation | Every query scoped to the active workspace; role checks on every server function and API call |
+| Container | Non-root, read-only filesystem, all capabilities dropped |
+| Audit | Every change, backup, restore, download and key reveal is logged |
 
-Convex talks to RustFS over the internal Docker network at `http://rustfs:9000`, so **the stack works fully without any public RustFS domain**. Exposing them is a deliberate choice. If you do, attach them on the RustFS service the same way as the backend (comma-separated with port mappings):
+## 🤖 Back up before every deploy
+
+```yaml
+- uses: flyingwebie/convex-selfhost-coolify/.github/actions/convex-backup@main
+  with:
+    console-url: https://backups.example.com
+    token: ${{ secrets.BACKUP_CONSOLE_TOKEN }}   # Workspace → Settings → API tokens
+    job-id: <job-id>
+- run: npx convex deploy
+```
+
+The REST API is documented in [`docs/github-action.md`](docs/github-action.md).
+
+## 🆚 Compared with
+
+| | This console | `npx convex export` + cron | Convex Cloud built-in backups |
+|---|:-:|:-:|:-:|
+| Self-hosted **and** Cloud | ✅ | ✅ | Cloud only |
+| Off-site copies in your own storage | ✅ | DIY | ❌ |
+| Encryption you hold the key to | ✅ | DIY | ❌ |
+| Immutable (Object Lock) | ✅ | DIY | ❌ |
+| Partial & scrubbed restores | ✅ | ❌ | ❌ |
+| Alerts, digests, status URL | ✅ | DIY | — |
+| Multi-project, roles, audit log | ✅ | ❌ | Per-team |
+
+Convex Cloud's own backups are excellent, so keep them on. This adds independent, encrypted copies outside Convex.
+
+## 📁 Repository
 
 ```
-https://s3.example.com:9000,https://s3-console.example.com:9001
+backups/                 Convex Backup Console (TanStack Start · Better Auth · SQLite · shadcn/ui)
+coolify/                 Coolify templates (console + Convex instance) and logo
+docker-compose.yaml      Convex-on-Coolify instance template (Postgres + RustFS)
+docs/                    Guides, API reference, images
+testing/                 Local Docker kit, Playwright e2e (38 checks), demo data
+.github/                 Image build (amd64 + arm64) and the convex-backup GitHub Action
 ```
 
-**Port 9000 — S3 API** (`SERVICE_URL_RUSTFS_9000`, e.g. `https://s3.example.com`)
-
-| Pros | Cons |
-| ---- | ---- |
-| Browse/manage buckets remotely with any S3 client (`aws cli`, Cyberduck, rclone) without SSH-ing into the server | Larger attack surface: anyone can probe the endpoint; security rests entirely on your access/secret keys |
-| Reuse RustFS as general-purpose object storage for *other* apps and servers | Public presigned URLs would leak your infra hostname and bypass Convex's access control if misused |
-| Off-server tooling (e.g. rclone sync of the RustFS volume from another machine) becomes trivial | Convex still uses the internal endpoint — a public 9000 domain adds **zero** benefit to Convex itself |
-|  | RustFS is a young project; keeping it off the public internet limits blast radius of any future CVE |
-
-**Port 9001 — Admin console** (`SERVICE_URL_CONSOLE_9001`, e.g. `https://s3-console.example.com`)
-
-| Pros | Cons |
-| ---- | ---- |
-| Web UI to inspect buckets, objects and access keys — handy for debugging what Convex actually wrote | It's an admin panel: a credential leak or console vulnerability = full control of all Convex file data |
-| No CLI/SSH needed for quick checks | Login is just the same access/secret key pair — no 2FA, no SSO, no rate limiting beyond what Traefik gives you |
-
-**Recommendation:** keep both internal (assign no domains). When you need the console occasionally, tunnel instead of exposing it:
+## 🧪 Development & tests
 
 ```bash
-# From your machine — console then available at http://localhost:9001
-ssh -L 9001:localhost:9001 user@your-server
-docker compose exec rustfs true  # or map the port temporarily
+cd backups && pnpm install
+BACKUP_MASTER_KEY=dev BETTER_AUTH_SECRET=dev-secret-at-least-32-characters-long \
+ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-password' pnpm dev
+pnpm exec vitest run
 ```
 
-Or use `ssh -L 9000:...` with the `aws` CLI pointed at `http://localhost:9000` for S3 access. If you must expose them permanently, at minimum: strong generated keys (Coolify's defaults are fine), Traefik IP allow-list or basic-auth middleware on the console domain, and Crowdsec/fail2ban on the host.
+The end-to-end suite runs two real Convex stacks (Postgres + RustFS), an S3 stand-in, Mailpit and a
+webhook receiver locally. See [`testing/local/README.md`](testing/local/README.md) and the results in [`testing/TESTING.md`](testing/TESTING.md).
 
-### 1.3 Set the environment variables
+## ❓ FAQ
 
-In **Environment Variables**, add the backup-target credentials (see section 3 for how to obtain them):
+**Does it need Cloudflare?**
+No. Cloudflare R2 is a great destination and Cloudflare Tunnel is an optional hardening layer, but neither is required.
 
-```env
-# Admin key — leave empty on FIRST deploy, fill in after step 1.5
-CONVEX_SELF_HOSTED_ADMIN_KEY=
+**What happens if I lose the console?**
+Your backups are plain (or age-encrypted) Convex snapshot zips in your own buckets. Decrypt them with the age key you saved and `npx convex import` them. The console is a convenience, not a dependency.
 
-# External backup target (AWS S3 or Cloudflare R2)
-BACKUP_AWS_ACCESS_KEY_ID=xxxxxxxx
-BACKUP_AWS_SECRET_ACCESS_KEY=xxxxxxxx
-BACKUP_S3_BUCKET=my-convex-backups
-BACKUP_S3_REGION=auto              # 'auto' for R2, e.g. 'eu-west-1' for AWS
-BACKUP_S3_ENDPOINT=                # empty for AWS S3; R2 endpoint for Cloudflare
+**Can I restore into Convex Cloud?**
+Yes, with a deploy key for the target deployment. Restores into a *production* Cloud deployment show an extra warning.
 
-# Optional
-INCLUDE_FILE_STORAGE=true
-SHOUTRRR_URL=                      # e.g. telegram://<token>@telegram?chats=<chatid>
-```
+**How big can a backup be?**
+Exports are streamed to disk and uploaded in parts, so size is bounded by the container's free disk space, not memory.
 
-Everything else has sensible defaults baked into the compose file.
+**Is Microsoft sign-in work-accounts only?**
+Set `MICROSOFT_TENANT_ID` to `common` (any account), `organizations` (work/school), or your tenant ID.
 
-### 1.4 First deploy
+## 🗺️ Roadmap
 
-Hit **Deploy**. Startup order is enforced via healthchecks:
+- Scheduled restore drills with automatic verification
+- Backing up Convex environment variables alongside data
+- Self-registration of new instances from the Convex template
+- One-click template in Coolify's built-in catalogue ([how to submit](coolify/README.md#submit-them-to-coolifys-built-in-template-list))
 
-```
-postgres ──┐
-           ├─► rustfs ─► rustfs-init (creates buckets) ─► backend ─► dashboard
-rustfs ────┘                                                      └─► backups
-```
+## License
 
-The `backups` container is **built from source** (the repo publishes no image), so the first deploy takes an extra minute or two.
-
-### 1.5 Generate the admin key
-
-Once `backend` is healthy, exec into it (Coolify → resource → Terminal on the `backend` container, or via SSH):
-
-```bash
-docker compose exec backend ./generate_admin_key.sh
-```
-
-Copy the printed key (format: `self-hosted-convex|01...`) and:
-
-1. Paste it into the `CONVEX_SELF_HOSTED_ADMIN_KEY` environment variable in Coolify.
-2. Redeploy (only the `backups` container actually needs the restart).
-3. Use the same key to log into the dashboard at your `SERVICE_URL_DASHBOARD_6791` domain.
-
-### 1.6 Point your app at it
-
-In your frontend/CLI project's `.env` (Vite example):
-
-```env
-# Client bundle — the Convex API (3210 domain)
-VITE_CONVEX_URL=https://backend.example.com
-
-# Server-only — used by the CLI for `convex dev` / `convex deploy`
-CONVEX_SELF_HOSTED_URL=https://backend.example.com
-CONVEX_SELF_HOSTED_ADMIN_KEY=self-hosted-convex|01...
-
-# HTTP actions / webhooks — the 3211 SITE domain (NOT the dashboard!)
-CONVEX_SITE_URL=https://site.example.com
-```
-
-```bash
-npx convex dev        # develop against your self-hosted backend
-npx convex deploy     # push functions
-```
-
-Common mistakes that all end in `Retrying request (attempt N/6)...` loops:
-
-- **Trailing slash** on any of these URLs — remove it.
-- **`CONVEX_SITE_URL` set to the dashboard domain** — the dashboard (`6791`) is just the admin UI; HTTP actions live on the `3211` site domain from step 1.2.
-- **Mismatch between the URL you call and `CONVEX_CLOUD_ORIGIN` inside the container** — scheme, host, no port, no trailing slash must match exactly.
-
-Quick sanity check — this must return a version string before the CLI will work:
-
-```bash
-curl -i https://backend.example.com/version
-```
-
----
-
-## 2. How the pieces fit together
-
-### Postgres (system of record)
-
-`POSTGRES_URL` is set **without a database name** — Convex derives the DB name from `INSTANCE_NAME` (dashes → underscores, so `self-hosted-convex` → `self_hosted_convex`), which the `postgres` service pre-creates via `POSTGRES_DB`. `DO_NOT_REQUIRE_SSL=true` is safe because traffic never leaves the internal Docker network.
-
-> If you change `INSTANCE_NAME`, change `CONVEX_DB_NAME` to match (underscored version) **before first deploy**.
-
-### RustFS (S3 storage)
-
-The `rustfs-init` one-shot job creates the five buckets Convex expects:
-
-- `convex-snapshot-exports`
-- `convex-snapshot-imports`
-- `convex-modules`
-- `convex-user-files`
-- `convex-search-indexes`
-
-The backend uses path-style addressing (`AWS_S3_FORCE_PATH_STYLE=true`), disabled SSE and checksums (required for most S3-compatible stores), and the internal endpoint `http://rustfs:9000`. User file uploads, deployed modules, search indexes and export/import snapshots all land in RustFS instead of the container filesystem.
-
-### Data volumes
-
-| Volume          | Contents                                    |
-| --------------- | ------------------------------------------- |
-| `postgres-data` | All Convex tables/documents/indexes         |
-| `rustfs-data`   | Files, modules, search indexes, exports     |
-| `convex-data`   | Backend scratch/state (incl. staged exports)|
-
----
-
-## 3. Off-site backups (AWS S3 or Cloudflare R2)
-
-The `backups` service runs [orenaksakal/convex-self-hosted-backups](https://github.com/orenaksakal/convex-self-hosted-backups). It calls `npx convex export` against the backend (including file storage when `INCLUDE_FILE_STORAGE=true`), uploads the zip to your external bucket, and prunes old backups per frequency:
-
-| Frequency | Default retention (`MAX_*_BACKUPS`) |
-| --------- | ----------------------------------- |
-| Hourly    | 24                                  |
-| Daily     | 7                                   |
-| Weekly    | 4 (Sundays)                         |
-| Monthly   | 12 (1st of month)                   |
-
-Schedules use randomized minutes/early-morning hours to avoid collisions. `RUN_ON_STARTUP=true` triggers an immediate backup on boot so you can verify the pipeline right away.
-
-### Option A — Cloudflare R2 (recommended: zero egress fees)
-
-1. Cloudflare Dashboard → **R2 Object Storage** → **Create bucket** (e.g. `my-convex-backups`).
-2. **R2 → Manage API Tokens → Create API Token**:
-   - Permissions: **Object Read & Write**
-   - Scope: only your backup bucket
-3. Note the **Access Key ID**, **Secret Access Key**, and your **Account ID**.
-4. Set in Coolify:
-
-```env
-BACKUP_AWS_ACCESS_KEY_ID=<r2-access-key-id>
-BACKUP_AWS_SECRET_ACCESS_KEY=<r2-secret-access-key>
-BACKUP_S3_BUCKET=my-convex-backups
-BACKUP_S3_REGION=auto
-BACKUP_S3_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-```
-
-### Option B — AWS S3
-
-1. Create a bucket (e.g. `my-convex-backups`) in your preferred region. Enable versioning if you want extra safety.
-2. Create an IAM user with programmatic access and a policy scoped to that bucket:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:ListBucket"],
-      "Resource": [
-        "arn:aws:s3:::my-convex-backups",
-        "arn:aws:s3:::my-convex-backups/*"
-      ]
-    }
-  ]
-}
-```
-
-3. Set in Coolify:
-
-```env
-BACKUP_AWS_ACCESS_KEY_ID=<iam-access-key-id>
-BACKUP_AWS_SECRET_ACCESS_KEY=<iam-secret-access-key>
-BACKUP_S3_BUCKET=my-convex-backups
-BACKUP_S3_REGION=eu-west-1
-BACKUP_S3_ENDPOINT=
-```
-
-### Resulting bucket layout
-
-```
-my-convex-backups/
-  hourly/   backup-2026-07-23T05-00-00-000Z.zip
-  daily/    backup-2026-07-23T03-14-00-000Z.zip
-  weekly/   backup-2026-07-19T02-41-00-000Z.zip
-  monthly/  backup-2026-07-01T04-02-00-000Z.zip
-```
-
-### Failure notifications (optional)
-
-Set `SHOUTRRR_URL` to get pinged when a backup fails. Telegram example:
-
-```env
-SHOUTRRR_URL=telegram://<bot-token>@telegram?chats=<chat-id>
-```
-
-Shoutrrr also supports Discord, Slack, email, etc.
-
-### Export cleanup
-
-Every `convex export` leaves a zip in `/convex/data/storage/exports` inside the backend container. The `export-cleanup` sidecar wipes that directory daily so the `convex-data` volume doesn't balloon.
-
----
-
-## 4. Restoring from a backup
-
-Backups are standard Convex export zips, importable into **any** Convex instance (self-hosted or cloud):
-
-```bash
-# Download the snapshot from S3/R2, then:
-export CONVEX_SELF_HOSTED_URL=https://backend.example.com
-export CONVEX_SELF_HOSTED_ADMIN_KEY='self-hosted-convex|01...'
-
-npx convex import --replace-all backup-2026-07-23T03-14-00-000Z.zip
-```
-
-`--replace-all` wipes the target instance and restores tables + file storage from the snapshot. Drop the flag to merge instead. Test a restore into a scratch instance at least once — a backup you've never restored is a hope, not a backup.
-
----
-
-## 5. Operations cheat-sheet
-
-```bash
-# Trigger a manual backup right now (restart the backups container with RUN_ON_STARTUP=true)
-docker compose restart backups
-
-# Tail backup logs
-docker compose logs -f backups
-
-# Generate/regenerate the admin key
-docker compose exec backend ./generate_admin_key.sh
-
-# Check Convex backend health
-curl https://backend.example.com/version
-```
-
-### Upgrading Convex
-
-The compose pins backend + dashboard to a specific commit hash (Coolify's tested revision). To upgrade, change both image tags to the **same** newer revision and redeploy. Convex only supports rolling forward — take a backup first, and never downgrade an instance whose data has been migrated.
-
-### Gotchas
-
-- **Missing 3211 domain:** Coolify's auto-generated domains often cover only `3210` and `6791`. Add the site domain with an explicit `:3211` port mapping on the Backend service (step 1.2), or HTTP actions and webhooks won't work.
-- **Admin key chicken-and-egg:** the `backups` container will crash-loop until `CONVEX_SELF_HOSTED_ADMIN_KEY` is set (step 1.5). That's expected on first deploy.
-- **Backups ≠ RustFS:** the backup service intentionally uses separate `BACKUP_*` credentials. Never point it at the local RustFS — that defeats the purpose.
-- **`INSTANCE_SECRET` is sacred:** losing `SERVICE_HEX_64_SECRET` or the Postgres volume without a backup means losing the deployment. The off-site snapshots are your recovery path.
-- **HTTPS required:** Convex clients require the backend/site/dashboard domains to be served over TLS; Coolify's Traefik handles the certificates automatically once domains are assigned.
+[MIT](LICENSE) © Davide Del Gatto · Flying Web Solutions. Not affiliated with Convex, Inc. or Coolify.

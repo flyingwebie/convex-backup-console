@@ -59,7 +59,7 @@ function Storage() {
                     <YAxis tickLine={false} axisLine={false} width={64} tickFormatter={(v: number) => formatBytes(v)} />
                     <ChartTooltip content={<ChartTooltipContent indicator="line" formatter={(v, name) => `${config[name as string]?.label ?? name}: ${formatBytes(Number(v))}`} />} />
                     {data.destinations.map((d, i) => (
-                      <Area key={d.id} dataKey={`d${i}`} type="stepAfter" stackId="a" fill={`var(--color-d${i})`} stroke={`var(--color-d${i})`} fillOpacity={0.3} />
+                      <Area key={d.id} dataKey={`d${i}`} type="stepAfter" stackId="a" fill={`var(--color-d${i})`} stroke={`var(--color-d${i})`} fillOpacity={0.3} isAnimationActive={false} />
                     ))}
                     <ChartLegend content={<ChartLegendContent />} />
                   </AreaChart>
