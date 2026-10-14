@@ -20,14 +20,14 @@ export function db(): Database.Database {
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS instances (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
   url TEXT NOT NULL,
   admin_key_enc TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS destinations (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('s3', 'local')),
   config TEXT NOT NULL,
   secret_enc TEXT,
@@ -97,6 +97,23 @@ CREATE TABLE IF NOT EXISTS channels (
   on_success INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS workspace_settings (
+  workspace_id TEXT PRIMARY KEY,
+  description TEXT,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  default_keep_last INTEGER,
+  default_keep_daily INTEGER DEFAULT 7,
+  default_keep_weekly INTEGER DEFAULT 4,
+  default_keep_monthly INTEGER DEFAULT 12,
+  default_encrypt INTEGER NOT NULL DEFAULT 1,
+  default_include_storage INTEGER NOT NULL DEFAULT 1,
+  stale_hours INTEGER NOT NULL DEFAULT 26,
+  trash_days INTEGER NOT NULL DEFAULT 7,
+  purge_backups INTEGER NOT NULL DEFAULT 0,
+  age_recipient TEXT,
+  age_identity_enc TEXT,
+  deleted_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   at INTEGER NOT NULL,
@@ -106,28 +123,54 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 `
 
-export function audit(actor: string, action: string, detail?: unknown) {
+export function audit(workspaceId: string | null, actor: string, action: string, detail?: unknown) {
   db()
-    .prepare('INSERT INTO audit (at, actor, action, detail) VALUES (?, ?, ?, ?)')
-    .run(Date.now(), actor, action, detail === undefined ? null : JSON.stringify(detail))
+    .prepare('INSERT INTO audit (workspace_id, at, actor, action, detail) VALUES (?, ?, ?, ?, ?)')
+    .run(workspaceId, Date.now(), actor, action, detail === undefined ? null : JSON.stringify(detail))
 }
 
-/** Additive column migrations for databases created by earlier versions. */
+/** Migrations for databases created by earlier versions. Idempotent. */
 function migrate(conn: Database.Database) {
+  const cols = (table: string) => (conn.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name)
   const add = (table: string, column: string, ddl: string) => {
-    const cols = conn.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
-    if (!cols.some((c) => c.name === column)) conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`)
+    if (!cols(table).includes(column)) conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`)
   }
   add('jobs', 'keep_daily', 'INTEGER')
   add('jobs', 'keep_weekly', 'INTEGER')
   add('jobs', 'keep_monthly', 'INTEGER')
   add('jobs', 'encrypt', 'INTEGER NOT NULL DEFAULT 0')
   add('runs', 'encrypted', 'INTEGER NOT NULL DEFAULT 0')
+
+  // v2: names were globally UNIQUE; workspaces need per-workspace uniqueness. Rebuild those tables.
+  for (const table of ['instances', 'destinations']) {
+    const sql = (conn.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string }).sql
+    if (!/name TEXT NOT NULL UNIQUE/.test(sql)) continue
+    conn.pragma('foreign_keys = OFF')
+    // SQLite's recommended rebuild: create new → copy → drop old → rename new (keeps other tables' FKs intact).
+    conn.transaction(() => {
+      const ddl = SCHEMA.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\);`))![0]
+      conn.exec(ddl.replace(`IF NOT EXISTS ${table} (`, `${table}_new (`))
+      const shared = cols(table).filter((c) => cols(`${table}_new`).includes(c)).join(', ')
+      conn.exec(`INSERT INTO ${table}_new (${shared}) SELECT ${shared} FROM ${table}`)
+      conn.exec(`DROP TABLE ${table}`)
+      conn.exec(`ALTER TABLE ${table}_new RENAME TO ${table}`)
+    })()
+    conn.pragma('foreign_keys = ON')
+  }
+
+  for (const table of ['instances', 'destinations', 'jobs', 'channels', 'runs', 'restores', 'audit']) add(table, 'workspace_id', 'TEXT')
+  for (const table of ['instances', 'destinations', 'jobs']) add(table, 'deleted_at', 'INTEGER')
+  conn.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS instances_ws_name ON instances (workspace_id, name) WHERE deleted_at IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS destinations_ws_name ON destinations (workspace_id, name) WHERE deleted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS runs_ws ON runs (workspace_id, started_at);
+    CREATE INDEX IF NOT EXISTS audit_ws ON audit (workspace_id, id);
+  `)
 }
 
 export function getSetting(key: string): string | null {
   const row = db().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
-  return row?.value ?? null
+  return row?.value || null
 }
 
 export function setSetting(key: string, value: string) {

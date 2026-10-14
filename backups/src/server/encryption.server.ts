@@ -3,32 +3,34 @@ import { Readable, Writable } from 'node:stream'
 import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { Decrypter, Encrypter, generateX25519Identity, identityToRecipient } from 'age-encryption'
 import { decrypt, encrypt } from './crypto.server'
-import { getSetting, setSetting } from './db.server'
+import { db } from './db.server'
+import { workspaceSettings } from './workspace.server'
 
-// One age X25519 key pair per console. The identity (private key) is stored encrypted with the
-// master key so the console can restore; operators also export it to recover with the `age` CLI.
+// One age X25519 key pair per workspace. The identity (private key) is stored encrypted with the
+// master key so the console can restore; owners also export it to recover with the `age` CLI.
 
-export function encryptionRecipient(): string | null {
-  return getSetting('age_recipient')
+export function encryptionRecipient(workspaceId: string): string | null {
+  return workspaceSettings(workspaceId).age_recipient
 }
 
-export async function createEncryptionKey(): Promise<{ identity: string; recipient: string }> {
-  if (encryptionRecipient()) throw new Error('An encryption key already exists')
+export async function createEncryptionKey(workspaceId: string): Promise<{ identity: string; recipient: string }> {
+  if (encryptionRecipient(workspaceId)) throw new Error('This workspace already has an encryption key')
   const identity = await generateX25519Identity()
   const recipient = await identityToRecipient(identity)
-  setSetting('age_identity_enc', encrypt(identity))
-  setSetting('age_recipient', recipient)
+  db()
+    .prepare('UPDATE workspace_settings SET age_identity_enc = ?, age_recipient = ? WHERE workspace_id = ?')
+    .run(encrypt(identity), recipient, workspaceId)
   return { identity, recipient }
 }
 
-export function encryptionIdentity(): string {
-  const enc = getSetting('age_identity_enc')
-  if (!enc) throw new Error('No encryption key configured')
+export function encryptionIdentity(workspaceId: string): string {
+  const enc = workspaceSettings(workspaceId).age_identity_enc
+  if (!enc) throw new Error('No encryption key configured for this workspace')
   return decrypt(enc)
 }
 
-export async function encryptFile(input: string, output: string) {
-  const recipient = encryptionRecipient()
+export async function encryptFile(workspaceId: string, input: string, output: string) {
+  const recipient = encryptionRecipient(workspaceId)
   if (!recipient) throw new Error('No encryption key configured')
   const e = new Encrypter()
   e.addRecipient(recipient)
@@ -38,9 +40,9 @@ export async function encryptFile(input: string, output: string) {
   )
 }
 
-export async function decryptStream(input: Readable): Promise<Readable> {
+export async function decryptStream(workspaceId: string, input: Readable): Promise<Readable> {
   const d = new Decrypter()
-  d.addIdentity(encryptionIdentity())
+  d.addIdentity(encryptionIdentity(workspaceId))
   const out = await d.decrypt(Readable.toWeb(input) as ReadableStream<Uint8Array>)
   return Readable.fromWeb(out as unknown as WebReadableStream<Uint8Array>)
 }

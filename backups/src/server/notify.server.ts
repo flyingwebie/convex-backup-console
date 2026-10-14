@@ -21,16 +21,18 @@ export type NotifyEvent = {
 
 type ChannelRow = { id: string; name: string; kind: ChannelKind; config_enc: string; on_failure: number; on_success: number }
 
-/** Fans an event out to every channel subscribed to it. Never throws. */
-export async function notify(event: NotifyEvent) {
+/** Fans an event out to every channel of the workspace subscribed to it. Never throws. */
+export async function notify(workspaceId: string, event: NotifyEvent) {
   const failure = event.status !== 'ok'
   const channels = db()
-    .prepare(`SELECT * FROM channels WHERE ${failure ? 'on_failure' : 'on_success'} = 1`)
-    .all() as ChannelRow[]
+    .prepare(`SELECT * FROM channels WHERE workspace_id = ? AND ${failure ? 'on_failure' : 'on_success'} = 1`)
+    .all(workspaceId) as ChannelRow[]
+  const ws = db().prepare('SELECT name FROM organization WHERE id = ?').get(workspaceId) as { name: string } | undefined
+  const scoped = ws ? { ...event, title: `[${ws.name}] ${event.title}` } : event
   await Promise.all(
     channels.map((c) =>
-      send(JSON.parse(decrypt(c.config_enc)) as ChannelConfig, event).catch((err: unknown) =>
-        audit('system', 'notify.failed', { channel: c.name, error: err instanceof Error ? err.message : String(err) }),
+      send(JSON.parse(decrypt(c.config_enc)) as ChannelConfig, scoped).catch((err: unknown) =>
+        audit(workspaceId, 'system', 'notify.failed', { channel: c.name, error: err instanceof Error ? err.message : String(err) }),
       ),
     ),
   )

@@ -1,25 +1,29 @@
 import { Outlet, createFileRoute, redirect } from '@tanstack/react-router'
 import { AppSidebar } from '~/components/app-sidebar'
 import { SidebarInset, SidebarProvider } from '~/components/ui/sidebar'
-import { getUser } from '~/server/fns'
+import { getAppContext } from '~/server/fns'
 
 export const Route = createFileRoute('/_app')({
-  beforeLoad: async () => {
-    const user = await getUser()
-    if (!user) throw redirect({ to: '/login', search: { step: 'password' } })
-    if (!user.twoFactorEnabled) throw redirect({ to: '/security' })
-    return { user }
+  beforeLoad: async ({ location }) => {
+    const app = await getAppContext()
+    if (!app) throw redirect({ to: '/login', search: { step: 'password', next: location.href } })
+    if (!app.user.twoFactorEnabled) throw redirect({ to: '/security' })
+    if (!app.active && !location.pathname.startsWith('/platform') && location.pathname !== '/account') {
+      throw redirect({ to: '/no-workspace' })
+    }
+    return { app }
   },
   component: AppLayout,
 })
 
 function AppLayout() {
-  const { user } = Route.useRouteContext()
+  const { app } = Route.useRouteContext()
   return (
     <SidebarProvider>
-      <AppSidebar email={user.email} />
+      <AppSidebar app={app} />
       <SidebarInset>
-        <Outlet />
+        {/* Remount pages when switching workspace so no state leaks across. */}
+        <Outlet key={app.active?.id ?? 'none'} />
       </SidebarInset>
     </SidebarProvider>
   )

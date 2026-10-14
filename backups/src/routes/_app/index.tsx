@@ -10,6 +10,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { formatBytes, timeAgo } from '~/lib/format'
 import { useAction, usePolling } from '~/lib/use-action'
+import { useWorkspace } from '~/lib/use-workspace'
 import { getOverview, runJobNow } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/')({
@@ -17,10 +18,10 @@ export const Route = createFileRoute('/_app/')({
   component: Overview,
 })
 
-const STALE_MS = 26 * 3_600_000
-
 function Overview() {
   const data = Route.useLoaderData()
+  const { can: allowed, settings } = useWorkspace()
+  const STALE_MS = settings.stale_hours * 3_600_000
   const runNow = useServerFn(runJobNow)
   const { run, pending } = useAction()
   usePolling(data.runs.some((r) => r.status === 'running') || data.instances.some((i) => i.busy || i.restoring))
@@ -38,10 +39,12 @@ function Overview() {
                 Add an instance (its API URL and admin key), a destination to store backups, then a job that ties them together.
               </EmptyDescription>
             </EmptyHeader>
-            <EmptyContent className="flex-row justify-center gap-2">
-              <Button asChild><Link to="/instances">Add instance</Link></Button>
-              <Button variant="outline" asChild><Link to="/destinations">Add destination</Link></Button>
-            </EmptyContent>
+            {allowed('manage') && (
+              <EmptyContent className="flex-row justify-center gap-2">
+                <Button asChild><Link to="/instances">Add instance</Link></Button>
+                <Button variant="outline" asChild><Link to="/destinations">Add destination</Link></Button>
+              </EmptyContent>
+            )}
           </Empty>
         </PageBody>
       </>
@@ -87,7 +90,7 @@ function Overview() {
           {stale.length > 0 && (
             <Alert>
               <TriangleAlert />
-              <AlertTitle>No successful backup in the last 26 hours</AlertTitle>
+              <AlertTitle>No successful backup in the last {settings.stale_hours} hours</AlertTitle>
               <AlertDescription>{stale.map((i) => i.name).join(', ')}</AlertDescription>
             </Alert>
           )}
@@ -105,7 +108,7 @@ function Overview() {
               <KeyRound />
               <AlertTitle>Backups are not encrypted</AlertTitle>
               <AlertDescription>
-                <span>Anyone with bucket access can read them. <Link to="/settings" className="underline">Create an encryption key</Link>.</span>
+                <span>Anyone with bucket access can read them. <Link to="/workspace" className="underline">Create an encryption key</Link>.</span>
               </AlertDescription>
             </Alert>
           )}
@@ -153,7 +156,7 @@ function Overview() {
                       </TableCell>
                       <TableCell className="text-muted-foreground text-sm">{jobs.length ? jobs.map((j) => j.name).join(', ') : '—'}</TableCell>
                       <TableCell className="text-right">
-                        {jobs[0] && (
+                        {jobs[0] && allowed('run') && (
                           <Button
                             size="sm"
                             variant="outline"

@@ -1,21 +1,30 @@
-import { Link, useRouterState } from '@tanstack/react-router'
+import { Link, useRouter, useRouterState } from '@tanstack/react-router'
+import { useServerFn } from '@tanstack/react-start'
 import {
   Activity,
   Bell,
   CalendarClock,
+  Check,
+  ChevronsUpDown,
   Database,
   HardDrive,
   LayoutDashboard,
-  LifeBuoy,
   LogOut,
   Monitor,
   Moon,
+  Plus,
   ScrollText,
-  Settings,
+  Server,
+  Settings2,
   Sun,
+  Trash2,
+  UserRound,
+  Users,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
-import { authClient } from '~/lib/auth-client'
+import { useState } from 'react'
+import { CreateWorkspaceDialog } from '~/components/create-workspace'
+import { WorkspaceLogo } from '~/components/workspace-logo'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,8 +46,14 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from '~/components/ui/sidebar'
+import { authClient } from '~/lib/auth-client'
+import { ROLE_INFO, can, type Action } from '~/lib/permissions'
+import { switchWorkspace, type getAppContext } from '~/server/fns'
 
-const nav = [
+type App = NonNullable<Awaited<ReturnType<typeof getAppContext>>>
+type Item = { to: string; label: string; icon: typeof Database; need?: Action }
+
+const nav: { label: string; items: Item[] }[] = [
   {
     label: 'Backups',
     items: [
@@ -56,61 +71,111 @@ const nav = [
     ],
   },
   {
-    label: 'Admin',
+    label: 'Workspace',
     items: [
-      { to: '/settings', label: 'Settings', icon: Settings },
+      { to: '/workspace', label: 'Settings', icon: Settings2 },
+      { to: '/members', label: 'Members', icon: Users },
+      { to: '/trash', label: 'Trash', icon: Trash2 },
       { to: '/audit', label: 'Audit log', icon: ScrollText },
     ],
   },
-] as const
+]
 
-export function AppSidebar({ email }: { email: string }) {
+export function AppSidebar({ app }: { app: App }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const router = useRouter()
   const { theme, setTheme } = useTheme()
+  const doSwitch = useServerFn(switchWorkspace)
+  const [creating, setCreating] = useState(false)
+  const active = app.active
+  const isActive = (to: string) => (to === '/' ? pathname === '/' : pathname.startsWith(to))
 
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <Link to="/">
-                <div className="bg-primary text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
-                  <LifeBuoy className="size-4" />
-                </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">Convex Backups</span>
-                  <span className="text-muted-foreground truncate text-xs">Self-hosted console</span>
-                </div>
-              </Link>
-            </SidebarMenuButton>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent">
+                  <WorkspaceLogo name={active?.name ?? '—'} logo={active?.logo} />
+                  <div className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate font-semibold">{active?.name ?? 'No workspace'}</span>
+                    <span className="text-muted-foreground truncate text-xs">{active ? ROLE_INFO[active.role].label : 'Convex Backups'}</span>
+                  </div>
+                  <ChevronsUpDown className="ml-auto size-4" />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-64">
+                <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">Workspaces</DropdownMenuLabel>
+                {app.workspaces.map((w) => (
+                  <DropdownMenuItem
+                    key={w.id}
+                    onClick={async () => {
+                      if (w.id === active?.id) return
+                      await doSwitch({ data: { id: w.id } })
+                      await router.navigate({ to: '/' })
+                      await router.invalidate()
+                    }}
+                  >
+                    <WorkspaceLogo name={w.name} logo={w.logo} className="size-6 rounded-md text-[10px]" />
+                    <span className="truncate">{w.name}</span>
+                    {w.id === active?.id && <Check className="ml-auto" />}
+                  </DropdownMenuItem>
+                ))}
+                {app.user.isPlatformAdmin && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setCreating(true)}>
+                      <Plus /> Create workspace
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        {nav.map((group) => (
-          <SidebarGroup key={group.label}>
-            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+        {active &&
+          nav.map((group) => (
+            <SidebarGroup key={group.label}>
+              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {group.items
+                    .filter((i) => !i.need || can(active.role, i.need))
+                    .map((item) => (
+                      <SidebarMenuItem key={item.to}>
+                        <SidebarMenuButton asChild tooltip={item.label} isActive={isActive(item.to)}>
+                          <Link to={item.to}>
+                            <item.icon />
+                            <span>{item.label}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))}
+        {app.user.isPlatformAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Platform</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {group.items.map((item) => (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarMenuButton
-                      asChild
-                      tooltip={item.label}
-                      isActive={item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)}
-                    >
-                      <Link to={item.to}>
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild tooltip="Platform" isActive={isActive('/platform')}>
+                    <Link to="/platform">
+                      <Server />
+                      <span>Workspaces & users</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        ))}
+        )}
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
@@ -119,12 +184,21 @@ export function AppSidebar({ email }: { email: string }) {
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg">
                   <div className="bg-muted flex aspect-square size-8 items-center justify-center rounded-lg text-xs font-semibold uppercase">
-                    {email.slice(0, 2)}
+                    {app.user.email.slice(0, 2)}
                   </div>
-                  <span className="truncate text-sm">{email}</span>
+                  <div className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate">{app.user.name}</span>
+                    <span className="text-muted-foreground truncate text-xs">{app.user.email}</span>
+                  </div>
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-56">
+                <DropdownMenuItem asChild>
+                  <Link to="/account">
+                    <UserRound /> Account & security
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">Theme</DropdownMenuLabel>
                 {(
                   [
@@ -134,15 +208,10 @@ export function AppSidebar({ email }: { email: string }) {
                   ] as const
                 ).map(([value, label, Icon]) => (
                   <DropdownMenuItem key={value} onClick={() => setTheme(value)}>
-                    <Icon /> {label} {theme === value && <span className="text-muted-foreground ml-auto text-xs">✓</span>}
+                    <Icon /> {label} {theme === value && <Check className="ml-auto" />}
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link to="/settings">
-                    <Settings /> Account & security
-                  </Link>
-                </DropdownMenuItem>
                 <DropdownMenuItem
                   variant="destructive"
                   onClick={async () => {
@@ -158,6 +227,7 @@ export function AppSidebar({ email }: { email: string }) {
         </SidebarMenu>
       </SidebarFooter>
       <SidebarRail />
+      <CreateWorkspaceDialog open={creating} onClose={() => setCreating(false)} />
     </Sidebar>
   )
 }

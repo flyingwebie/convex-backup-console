@@ -16,6 +16,7 @@ import { Input } from '~/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { useAction } from '~/lib/use-action'
+import { useWorkspace } from '~/lib/use-workspace'
 import { addDestination, deleteDestination, getDestinations, testDestination } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/destinations')({
@@ -29,13 +30,14 @@ function Destinations() {
   const test = useServerFn(testDestination)
   const del = useServerFn(deleteDestination)
   const { run } = useAction()
+  const { can: allowed } = useWorkspace()
 
   return (
     <>
       <PageHeader
         title="Destinations"
         description="Where backups are stored. Use at least one off-site destination."
-        actions={<Button onClick={() => setOpen(true)}><Plus /> Add destination</Button>}
+        actions={allowed('manage') && <Button onClick={() => setOpen(true)}><Plus /> Add destination</Button>}
       />
       <PageBody>
         {destinations.length === 0 ? (
@@ -45,7 +47,7 @@ function Destinations() {
               <EmptyTitle>No destinations yet</EmptyTitle>
               <EmptyDescription>Cloudflare R2, AWS S3, Backblaze B2, MinIO, or a volume on this server.</EmptyDescription>
             </EmptyHeader>
-            <EmptyContent><Button onClick={() => setOpen(true)}><Plus /> Add destination</Button></EmptyContent>
+            {allowed('manage') && <EmptyContent><Button onClick={() => setOpen(true)}><Plus /> Add destination</Button></EmptyContent>}
           </Empty>
         ) : (
           <Card className="py-0">
@@ -74,6 +76,7 @@ function Destinations() {
                       <TableCell className="text-muted-foreground font-mono text-xs">{d.summary}</TableCell>
                       <TableCell className="text-sm">{users.length ? users.map((j) => j.name).join(', ') : <span className="text-muted-foreground">—</span>}</TableCell>
                       <TableCell>
+                        {allowed('run') && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon" aria-label="Actions"><MoreHorizontal /></Button>
@@ -82,15 +85,21 @@ function Destinations() {
                             <DropdownMenuItem onClick={() => run(() => test({ data: { id: d.id } }), { success: `${d.name} is reachable and writable` })}>
                               <PlugZap /> Test access
                             </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <Confirm
-                              trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Delete</DropdownMenuItem>}
-                              title={`Delete ${d.name}?`}
-                              description="Jobs stop sending backups here. Files already stored are not deleted, but the console forgets about them."
-                              onConfirm={() => run(() => del({ data: { id: d.id } }), { success: `${d.name} deleted` })}
-                            />
+                            {allowed('manage') && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <Confirm
+                                  trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Move to trash</DropdownMenuItem>}
+                                  title={`Delete ${d.name}?`}
+                                  description="Jobs stop sending backups here. It stays in the Trash until the grace period ends. Files already stored in it are never deleted."
+                                  action="Move to trash"
+                                  onConfirm={() => run(() => del({ data: { id: d.id } }), { success: `${d.name} moved to trash` })}
+                                />
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        )}
                       </TableCell>
                     </TableRow>
                   )

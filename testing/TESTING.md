@@ -54,3 +54,17 @@ old admin keys stay valid after a wipe as long as `INSTANCE_SECRET` is unchanged
 | New shadcn UI, end to end | ✅ `testing/local/e2e/e2e.mjs`: 13 Playwright checks on a fresh console (login, 2FA enrolment, instances, destination, key, channel, job, run, download, refused restore, alert, overview, audit) |
 
 Not testable locally: Telegram (needs api.telegram.org), real R2/Discord/Slack endpoints, Cloudflare Tunnel.
+
+## Local Docker run #3 — workspaces (2026-10-14)
+
+| Check | Result |
+|---|---|
+| Upgrade an existing single-tenant DB | ✅ "Default" workspace created; all instances/runs/jobs/key backfilled; admin promoted to platform admin; table rebuild kept FKs (0 violations) |
+| Branding | ✅ SVG logo upload (served sandboxed), rename, slug, description, timezone |
+| Isolation | ✅ new workspace sees no instances/runs of another; Operator of workspace B gets 404 for workspace A's backup |
+| Invitations | ✅ link invite → new account → 2FA enrolment → lands in the invited workspace with the right role |
+| Roles | ✅ Viewer: no add/run/download/invite UI, download API 401; owner changes role to Operator |
+| Trash & deletion policy | ✅ job → Trash → restore; purge with "keep files" keeps backups restorable; purge with "delete files" removed the object from R2 (7 → 6) |
+| Workspace deletion | ✅ deleted workspace disappears from the switcher; Platform shows it as Deleted and restores it |
+
+`testing/local/e2e/e2e.mjs`: **22/22** checks passed on a fresh console.

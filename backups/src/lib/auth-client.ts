@@ -1,6 +1,16 @@
 import { createAuthClient } from 'better-auth/react'
-import { twoFactorClient } from 'better-auth/client/plugins'
+import { adminClient, organizationClient, twoFactorClient } from 'better-auth/client/plugins'
 
 export const authClient = createAuthClient({
-  plugins: [twoFactorClient({ onTwoFactorRedirect: () => { window.location.href = '/login?step=totp' } })],
+  plugins: [
+    twoFactorClient({
+      // Keep ?next= across the 2FA step (e.g. returning to an invitation).
+      onTwoFactorRedirect: () => {
+        const next = new URLSearchParams(window.location.search).get('next')
+        window.location.href = `/login?step=totp${next ? `&next=${encodeURIComponent(next)}` : ''}`
+      },
+    }),
+    organizationClient(),
+    adminClient(),
+  ],
 })

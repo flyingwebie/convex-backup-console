@@ -18,6 +18,7 @@ import { Switch } from '~/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { CRON_PRESETS, describeCron, describeRetention, timeAgo } from '~/lib/format'
 import { useAction, usePolling } from '~/lib/use-action'
+import { useWorkspace } from '~/lib/use-workspace'
 import { addJob, deleteJob, getJobs, runJobNow, setJobEnabled, updateJob, type JobView } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/jobs')({
@@ -35,6 +36,7 @@ function Jobs() {
   const del = useServerFn(deleteJob)
   const { run, pending } = useAction()
   usePolling(data.instances.some((i) => i.busy))
+  const { can: allowed } = useWorkspace()
   const instance = (id: string) => data.instances.find((i) => i.id === id)
   const dest = (id: string) => data.destinations.find((d) => d.id === id)?.name ?? '?'
   const ready = data.instances.length > 0 && data.destinations.length > 0
@@ -44,7 +46,7 @@ function Jobs() {
       <PageHeader
         title="Jobs"
         description="A job backs up one instance to one or more destinations, manually or on a schedule."
-        actions={<Button disabled={!ready} onClick={() => setEditing('new')}><Plus /> New job</Button>}
+        actions={allowed('manage') && <Button disabled={!ready} onClick={() => setEditing('new')}><Plus /> New job</Button>}
       />
       <PageBody>
         {data.jobs.length === 0 ? (
@@ -57,7 +59,7 @@ function Jobs() {
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
-              {ready ? (
+              {!allowed('manage') ? null : ready ? (
                 <Button onClick={() => setEditing('new')}><Plus /> New job</Button>
               ) : (
                 <div className="flex gap-2">
@@ -93,7 +95,7 @@ function Jobs() {
                         <div className="text-muted-foreground text-xs">{inst?.name}{!j.include_storage && ' · data only, no files'}</div>
                       </TableCell>
                       <TableCell>
-                        <div className="text-sm">{describeCron(j.cron)}</div>
+                        <div className="text-sm">{describeCron(j.cron)}{j.cron && <span className="text-muted-foreground text-xs"> · {data.timezone}</span>}</div>
                         {j.next_run && <div className="text-muted-foreground text-xs">next {timeAgo(j.next_run)}</div>}
                       </TableCell>
                       <TableCell className="text-sm">{describeRetention(j)}</TableCell>
@@ -105,32 +107,37 @@ function Jobs() {
                       <TableCell>
                         <Switch
                           checked={j.enabled}
-                          disabled={!j.cron}
+                          disabled={!j.cron || !allowed('manage')}
                           aria-label="Schedule active"
                           onCheckedChange={(enabled) => run(() => toggle({ data: { id: j.id, enabled } }), { success: enabled ? 'Schedule resumed' : 'Schedule paused' })}
                         />
                       </TableCell>
                       <TableCell className="pr-4 text-right">
                         <div className="flex justify-end gap-1">
-                          <Button size="sm" variant="outline" disabled={pending || inst?.busy} onClick={() => run(() => runNow({ data: { id: j.id } }), { success: `${j.name} started` })}>
+                          {allowed('run') && <Button size="sm" variant="outline" disabled={pending || inst?.busy} onClick={() => run(() => runNow({ data: { id: j.id } }), { success: `${j.name} started` })}>
                             <Play /> Run
-                          </Button>
+                          </Button>}
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" aria-label="Actions"><MoreHorizontal /></Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => setEditing(j)}><Pencil /> Edit</DropdownMenuItem>
+                              {allowed('manage') && <DropdownMenuItem onClick={() => setEditing(j)}><Pencil /> Edit</DropdownMenuItem>}
                               <DropdownMenuItem asChild>
                                 <Link to="/runs" search={{ job: j.id }}><History /> Run history</Link>
                               </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <Confirm
-                                trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Delete</DropdownMenuItem>}
-                                title={`Delete ${j.name}?`}
-                                description="The schedule stops. Existing backups stay in their destinations and remain restorable from Runs."
-                                onConfirm={() => run(() => del({ data: { id: j.id } }), { success: 'Job deleted' })}
-                              />
+                              {allowed('manage') && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <Confirm
+                                    trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Move to trash</DropdownMenuItem>}
+                                    title={`Delete ${j.name}?`}
+                                    description="The schedule stops and the job moves to the Trash. Its backups stay restorable from Runs."
+                                    action="Move to trash"
+                                    onConfirm={() => run(() => del({ data: { id: j.id } }), { success: 'Job moved to trash' })}
+                                  />
+                                </>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
@@ -148,7 +155,6 @@ function Jobs() {
   )
 }
 
-const RECOMMENDED = { keepLast: '', keepDaily: '7', keepWeekly: '4', keepMonthly: '12' }
 
 function JobDialog({ data, job, onClose }: { data: Data; job: JobView | 'new' | null; onClose: () => void }) {
   if (job === null) return null
@@ -166,6 +172,8 @@ function JobForm({ data, job, onClose }: { data: Data; job: JobView | null; onCl
   const update = useServerFn(updateJob)
   const { run, pending } = useAction()
   const n = (v: number | null | undefined) => (v ? String(v) : '')
+  const d = data.defaults
+  const RECOMMENDED = { keepLast: n(d.keepLast), keepDaily: n(d.keepDaily), keepWeekly: n(d.keepWeekly), keepMonthly: n(d.keepMonthly) }
   const [name, setName] = useState(job?.name ?? 'Daily backup')
   const [instanceId, setInstanceId] = useState(job?.instance_id ?? data.instances[0]?.id ?? '')
   const [destinationIds, setDestinationIds] = useState<string[]>(job?.destination_ids ?? data.destinations.map((d) => d.id).slice(0, 1))
@@ -174,8 +182,8 @@ function JobForm({ data, job, onClose }: { data: Data; job: JobView | null; onCl
   const [keepVals, setKeep] = useState(
     job ? { keepLast: n(job.keep_last), keepDaily: n(job.keep_daily), keepWeekly: n(job.keep_weekly), keepMonthly: n(job.keep_monthly) } : RECOMMENDED,
   )
-  const [includeStorage, setIncludeStorage] = useState(job?.include_storage ?? true)
-  const [encrypt, setEncrypt] = useState(job?.encrypt ?? data.encryption)
+  const [includeStorage, setIncludeStorage] = useState(job?.include_storage ?? d.includeStorage)
+  const [encrypt, setEncrypt] = useState(job?.encrypt ?? (data.encryption && d.encrypt))
   const num = (v: string) => (v ? Number(v) : null)
 
   async function submit(e: React.FormEvent) {
@@ -255,7 +263,7 @@ function JobForm({ data, job, onClose }: { data: Data; job: JobView | null; onCl
           </Field>
           {preset === 'custom' && (
             <Field>
-              <FieldLabel htmlFor="cron">Cron expression (UTC)</FieldLabel>
+              <FieldLabel htmlFor="cron">Cron expression ({data.timezone})</FieldLabel>
               <Input id="cron" value={customCron} onChange={(e) => setCustomCron(e.target.value)} placeholder="30 2 * * 1-5" className="font-mono" required />
             </Field>
           )}
@@ -265,7 +273,7 @@ function JobForm({ data, job, onClose }: { data: Data; job: JobView | null; onCl
           <div className="flex items-center justify-between">
             <FieldLegend variant="label">Retention (per destination)</FieldLegend>
             <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => setKeep(RECOMMENDED)}>
-              Use recommended
+              Use workspace defaults
             </Button>
           </div>
           <FieldDescription>
@@ -293,7 +301,7 @@ function JobForm({ data, job, onClose }: { data: Data; job: JobView | null; onCl
             <FieldLabel htmlFor="encrypt">Encrypt archives (age)</FieldLabel>
             <FieldDescription>
               {data.encryption ? 'Archives are encrypted before upload; the console decrypts them for restore and download.' : (
-                <>Create an encryption key in <Link to="/settings" className="underline">Settings</Link> first.</>
+                <>Create an encryption key in <Link to="/workspace" className="underline">Workspace settings</Link> first.</>
               )}
             </FieldDescription>
           </FieldContent>

@@ -1,60 +1,98 @@
-import { createMiddleware, createServerFn } from '@tanstack/react-start'
+import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { auth } from './auth.server'
+import { can, ROLES } from '~/lib/permissions'
+import { auth, createUserWithPassword } from './auth.server'
 import { isInstanceBusy, startJob } from './backup.server'
 import { ensureBooted } from './boot.server'
 import { ConvexAdmin } from './convex.server'
 import { decrypt, encrypt } from './crypto.server'
 import { audit, db } from './db.server'
 import { createEncryptionKey, encryptionIdentity, encryptionRecipient } from './encryption.server'
+import { getSmtp, invitationUrl, saveSmtp, sendMail } from './mail.server'
 import { send, type ChannelConfig } from './notify.server'
+import { purgeItem, purgeWorkspace, restoreItem, restoreWorkspace, softDelete, softDeleteWorkspace } from './purge.server'
 import { isRestoring, startRestore } from './restore.server'
 import { nextRun, syncSchedules } from './scheduler.server'
 import { openDestination, type DestinationRow } from './storage.server'
-
-async function currentUser() {
-  await ensureBooted()
-  const session = await auth().api.getSession({ headers: getRequest().headers })
-  return session?.user ?? null
-}
-
-const requireUser = createMiddleware({ type: 'function' }).server(async ({ next }) => {
-  const user = await currentUser()
-  if (!user) throw new Error('Unauthorized')
-  // Every action requires an enrolled second factor.
-  if (!user.twoFactorEnabled) throw new Error('Two-factor authentication must be enabled first')
-  return next({ context: { user } })
-})
+import { requirePlatformAdmin, requireWorkspace, resolveContext, workspaceSettings } from './workspace.server'
 
 const parse =
   <T extends z.ZodType>(schema: T) =>
   (data: unknown) =>
     schema.parse(data) as z.infer<T>
-
 const byId = z.object({ id: z.string() })
+const headers = () => getRequest().headers
 
+// ── Session / workspace context ──────────────────────────────
+
+/** Minimal session info for auth pages. */
 export const getUser = createServerFn({ method: 'GET' }).handler(async () => {
-  const user = await currentUser()
-  return user ? { email: user.email, name: user.name, twoFactorEnabled: Boolean(user.twoFactorEnabled) } : null
+  const ctx = await resolveContext()
+  return ctx ? { email: ctx.user.email, twoFactorEnabled: ctx.user.twoFactorEnabled } : null
 })
+
+/** Everything the app shell needs: user, workspaces, the active one and its settings. */
+export const getAppContext = createServerFn({ method: 'GET' }).handler(async () => {
+  const ctx = await resolveContext()
+  if (!ctx) return null
+  const settings = ctx.active ? workspaceSettings(ctx.active.id) : null
+  return {
+    user: ctx.user,
+    workspaces: ctx.workspaces,
+    active: ctx.active,
+    settings: settings && {
+      timezone: settings.timezone,
+      stale_hours: settings.stale_hours,
+      trash_days: settings.trash_days,
+      encryption: Boolean(settings.age_recipient),
+    },
+  }
+})
+
+export const switchWorkspace = createServerFn({ method: 'POST' })
+  .validator(parse(byId))
+  .handler(async ({ data }) => {
+    const ctx = await resolveContext()
+    if (!ctx?.workspaces.some((w) => w.id === data.id)) throw new Error('Not a member of that workspace')
+    await auth().api.setActiveOrganization({ headers: headers(), body: { organizationId: data.id } })
+  })
+
+const slug = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Use lowercase letters, numbers and dashes')
+  .max(48)
+
+export const createWorkspace = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ name: z.string().trim().min(1).max(60), slug })))
+  .handler(async ({ data }) => {
+    const ctx = await requirePlatformAdmin()
+    const org = await auth().api.createOrganization({ headers: headers(), body: { name: data.name, slug: data.slug } })
+    if (!org) throw new Error('Could not create workspace')
+    workspaceSettings(org.id)
+    await auth().api.setActiveOrganization({ headers: headers(), body: { organizationId: org.id } })
+    audit(org.id, ctx.user.email, 'workspace.created', { name: data.name, slug: data.slug })
+    return { id: org.id }
+  })
 
 // ── Shared row shapes ────────────────────────────────────────
 
 type CopyRow = { destination_id: string; status: string; error: string | null; key: string; deleted: number }
 
-function listRuns(limit: number, jobId?: string) {
+function listRuns(ws: string, limit: number, jobId?: string) {
   const rows = db()
     .prepare(
       `SELECT r.*, j.name AS job_name, i.name AS instance_name,
          (SELECT json_group_array(json_object('destination_id', c.destination_id, 'status', c.status, 'error', c.error, 'key', c.object_key, 'deleted', c.deleted_at IS NOT NULL))
           FROM run_copies c WHERE c.run_id = r.id) AS copies
        FROM runs r LEFT JOIN jobs j ON j.id = r.job_id LEFT JOIN instances i ON i.id = r.instance_id
-       ${jobId ? 'WHERE r.job_id = ?' : ''}
+       WHERE r.workspace_id = ? ${jobId ? 'AND r.job_id = ?' : ''}
        ORDER BY r.started_at DESC LIMIT ${Number(limit)}`,
     )
-    .all(...(jobId ? [jobId] : [])) as Record<string, unknown>[]
+    .all(ws, ...(jobId ? [jobId] : [])) as Record<string, unknown>[]
   return rows.map((r) => ({
     id: String(r.id),
     job_id: (r.job_id as string | null) ?? null,
@@ -73,9 +111,9 @@ function listRuns(limit: number, jobId?: string) {
 }
 export type RunView = ReturnType<typeof listRuns>[number]
 
-function listInstances() {
+function listInstances(ws: string) {
   return (
-    db().prepare('SELECT id, name, url, created_at FROM instances ORDER BY name').all() as {
+    db().prepare('SELECT id, name, url, created_at FROM instances WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY name').all(ws) as {
       id: string
       name: string
       url: string
@@ -83,8 +121,8 @@ function listInstances() {
     }[]
   ).map((i) => {
     const last = db()
-      .prepare("SELECT status, started_at FROM runs WHERE instance_id = ? AND status != 'running' ORDER BY started_at DESC LIMIT 1")
-      .get(i.id) as { status: string; started_at: number } | undefined
+      .prepare("SELECT status FROM runs WHERE instance_id = ? AND status != 'running' ORDER BY started_at DESC LIMIT 1")
+      .get(i.id) as { status: string } | undefined
     const lastOk = db()
       .prepare("SELECT started_at FROM runs WHERE instance_id = ? AND status IN ('ok', 'partial') ORDER BY started_at DESC LIMIT 1")
       .get(i.id) as { started_at: number } | undefined
@@ -92,26 +130,27 @@ function listInstances() {
   })
 }
 
-function listDestinations() {
-  return (db().prepare('SELECT id, name, kind, config FROM destinations ORDER BY name').all() as DestinationRow[]).map((d) => {
-    const cfg = JSON.parse(d.config) as Record<string, string | boolean | undefined>
-    return {
-      id: d.id,
-      name: d.name,
-      kind: d.kind,
-      summary: d.kind === 'local' ? String(cfg.root) : `${cfg.endpoint || 'AWS S3'} · ${cfg.bucket}${cfg.prefix ? '/' + cfg.prefix : ''}`,
-    }
-  })
+function describeDestination(d: DestinationRow) {
+  const cfg = JSON.parse(d.config) as Record<string, string | boolean | undefined>
+  return d.kind === 'local' ? String(cfg.root) : `${cfg.endpoint || 'AWS S3'} · ${cfg.bucket}${cfg.prefix ? '/' + cfg.prefix : ''}`
 }
 
-function listJobs() {
+function listDestinations(ws: string) {
+  return (db().prepare('SELECT * FROM destinations WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY name').all(ws) as DestinationRow[]).map(
+    (d) => ({ id: d.id, name: d.name, kind: d.kind, summary: describeDestination(d) }),
+  )
+}
+
+function listJobs(ws: string) {
+  const tz = workspaceSettings(ws).timezone
   return (
     db()
       .prepare(
         `SELECT j.*, GROUP_CONCAT(jd.destination_id) AS destination_ids FROM jobs j
-         LEFT JOIN job_destinations jd ON jd.job_id = j.id GROUP BY j.id ORDER BY j.name`,
+         LEFT JOIN job_destinations jd ON jd.job_id = j.id
+         WHERE j.workspace_id = ? AND j.deleted_at IS NULL GROUP BY j.id ORDER BY j.name`,
       )
-      .all() as {
+      .all(ws) as {
       id: string
       name: string
       instance_id: string
@@ -131,18 +170,18 @@ function listJobs() {
     encrypt: Boolean(j.encrypt),
     enabled: Boolean(j.enabled),
     destination_ids: j.destination_ids ? j.destination_ids.split(',') : [],
-    next_run: j.enabled && j.cron ? nextRun(j.cron) : null,
+    next_run: j.enabled && j.cron ? nextRun(j.cron, tz) : null,
   }))
 }
 export type JobView = ReturnType<typeof listJobs>[number]
 
-function listRestores(limit: number) {
+function listRestores(ws: string, limit: number) {
   return db()
     .prepare(
       `SELECT id, run_id, object_key, target_name, mode, actor, status, confirm_message, rows_written, error, started_at, finished_at
-       FROM restores ORDER BY started_at DESC LIMIT ${Number(limit)}`,
+       FROM restores WHERE workspace_id = ? ORDER BY started_at DESC LIMIT ${Number(limit)}`,
     )
-    .all() as {
+    .all(ws) as {
     id: string
     run_id: string
     object_key: string
@@ -160,67 +199,81 @@ function listRestores(limit: number) {
 
 // ── Page loaders ─────────────────────────────────────────────
 
-export const getOverview = createServerFn({ method: 'GET' })
-  .middleware([requireUser])
-  .handler(async () => {
-    const since = Date.now() - 7 * 86_400_000
-    const stats = db()
-      .prepare(
-        `SELECT COUNT(*) AS total, SUM(status = 'ok') AS ok, SUM(status = 'partial') AS partial, SUM(status = 'failed') AS failed,
-                COALESCE(SUM(CASE WHEN status IN ('ok','partial') THEN bytes END), 0) AS bytes
-         FROM runs WHERE started_at >= ?`,
-      )
-      .get(since) as { total: number; ok: number | null; partial: number | null; failed: number | null; bytes: number }
+export const getOverview = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  const since = Date.now() - 7 * 86_400_000
+  const stats = db()
+    .prepare(
+      `SELECT COUNT(*) AS total, SUM(status = 'ok') AS ok, SUM(status = 'partial') AS partial, SUM(status = 'failed') AS failed,
+              COALESCE(SUM(CASE WHEN status IN ('ok','partial') THEN bytes END), 0) AS bytes
+       FROM runs WHERE workspace_id = ? AND started_at >= ?`,
+    )
+    .get(ws.id, since) as { total: number; ok: number | null; partial: number | null; failed: number | null; bytes: number }
+  return {
+    instances: listInstances(ws.id),
+    jobs: listJobs(ws.id),
+    destinations: listDestinations(ws.id),
+    runs: listRuns(ws.id, 8),
+    stats: { total: stats.total, ok: stats.ok ?? 0, partial: stats.partial ?? 0, failed: stats.failed ?? 0, bytes: stats.bytes },
+    encryption: Boolean(encryptionRecipient(ws.id)),
+    channels: (db().prepare('SELECT COUNT(*) AS n FROM channels WHERE workspace_id = ?').get(ws.id) as { n: number }).n,
+  }
+})
+
+export const getInstances = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  return { instances: listInstances(ws.id), jobs: listJobs(ws.id) }
+})
+
+export const getDestinations = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  return { destinations: listDestinations(ws.id), jobs: listJobs(ws.id) }
+})
+
+export const getJobs = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  const s = workspaceSettings(ws.id)
+  return {
+    jobs: listJobs(ws.id),
+    instances: listInstances(ws.id),
+    destinations: listDestinations(ws.id),
+    encryption: Boolean(s.age_recipient),
+    timezone: s.timezone,
+    defaults: {
+      keepLast: s.default_keep_last,
+      keepDaily: s.default_keep_daily,
+      keepWeekly: s.default_keep_weekly,
+      keepMonthly: s.default_keep_monthly,
+      encrypt: Boolean(s.default_encrypt),
+      includeStorage: Boolean(s.default_include_storage),
+    },
+  }
+})
+
+export const getRuns = createServerFn({ method: 'GET' })
+  .validator(parse(z.object({ jobId: z.string().optional() })))
+  .handler(async ({ data }) => {
+    const { ws } = await requireWorkspace('view')
     return {
-      instances: listInstances(),
-      jobs: listJobs(),
-      destinations: listDestinations(),
-      runs: listRuns(8),
-      restores: listRestores(3),
-      stats: { total: stats.total, ok: stats.ok ?? 0, partial: stats.partial ?? 0, failed: stats.failed ?? 0, bytes: stats.bytes },
-      encryption: Boolean(encryptionRecipient()),
-      channels: (db().prepare('SELECT COUNT(*) AS n FROM channels').get() as { n: number }).n,
+      runs: listRuns(ws.id, 100, data.jobId),
+      instances: listInstances(ws.id),
+      destinations: listDestinations(ws.id),
+      restores: listRestores(ws.id, 50),
     }
   })
 
-export const getInstances = createServerFn({ method: 'GET' })
-  .middleware([requireUser])
-  .handler(async () => ({ instances: listInstances(), jobs: listJobs() }))
-
-export const getDestinations = createServerFn({ method: 'GET' })
-  .middleware([requireUser])
-  .handler(async () => ({ destinations: listDestinations(), jobs: listJobs() }))
-
-export const getJobs = createServerFn({ method: 'GET' })
-  .middleware([requireUser])
-  .handler(async () => ({
-    jobs: listJobs(),
-    instances: listInstances(),
-    destinations: listDestinations(),
-    encryption: Boolean(encryptionRecipient()),
-  }))
-
-export const getRuns = createServerFn({ method: 'GET' })
-  .middleware([requireUser])
-  .validator(parse(z.object({ jobId: z.string().optional() })))
-  .handler(async ({ data }) => ({
-    runs: listRuns(100, data.jobId),
-    instances: listInstances(),
-    destinations: listDestinations(),
-    restores: listRestores(50),
-  }))
-
-export const getAudit = createServerFn({ method: 'GET' })
-  .middleware([requireUser])
-  .handler(async () => ({
-    events: db().prepare('SELECT id, at, actor, action, detail FROM audit ORDER BY id DESC LIMIT 300').all() as {
+export const getAudit = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  return {
+    events: db().prepare('SELECT id, at, actor, action, detail FROM audit WHERE workspace_id = ? ORDER BY id DESC LIMIT 300').all(ws.id) as {
       id: number
       at: number
       actor: string
       action: string
       detail: string | null
     }[],
-  }))
+  }
+})
 
 // ── Instances ────────────────────────────────────────────────
 
@@ -237,37 +290,52 @@ async function probe(url: string, adminKey: string) {
   return version
 }
 
+function uniqueName(err: unknown, what: string): never {
+  if (String(err).includes('UNIQUE')) throw new Error(`A ${what} with that name already exists in this workspace`)
+  throw err
+}
+
 export const addInstance = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(instanceInput))
-  .handler(async ({ data, context }) => {
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
     const version = await probe(data.url, data.adminKey)
     const id = randomUUID()
-    db()
-      .prepare('INSERT INTO instances (id, name, url, admin_key_enc, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(id, data.name, data.url, encrypt(data.adminKey), Date.now())
-    audit(context.user.email, 'instance.created', { id, name: data.name, url: data.url })
+    try {
+      db()
+        .prepare('INSERT INTO instances (id, workspace_id, name, url, admin_key_enc, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(id, ws.id, data.name, data.url, encrypt(data.adminKey), Date.now())
+    } catch (err) {
+      uniqueName(err, 'instance')
+    }
+    audit(ws.id, user.email, 'instance.created', { id, name: data.name, url: data.url })
     return { id, version }
   })
 
 export const updateInstance = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(z.object({ id: z.string(), name: instanceInput.shape.name, url: instanceInput.shape.url, adminKey: z.string().trim().optional() })))
-  .handler(async ({ data, context }) => {
-    const row = db().prepare('SELECT admin_key_enc FROM instances WHERE id = ?').get(data.id) as { admin_key_enc: string } | undefined
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    const row = db().prepare('SELECT admin_key_enc FROM instances WHERE id = ? AND workspace_id = ?').get(data.id, ws.id) as
+      | { admin_key_enc: string }
+      | undefined
     if (!row) throw new Error('Instance not found')
     const key = data.adminKey || decrypt(row.admin_key_enc)
     const version = await probe(data.url, key)
-    db().prepare('UPDATE instances SET name = ?, url = ?, admin_key_enc = ? WHERE id = ?').run(data.name, data.url, encrypt(key), data.id)
-    audit(context.user.email, 'instance.updated', { id: data.id, name: data.name, url: data.url, keyChanged: Boolean(data.adminKey) })
+    try {
+      db().prepare('UPDATE instances SET name = ?, url = ?, admin_key_enc = ? WHERE id = ?').run(data.name, data.url, encrypt(key), data.id)
+    } catch (err) {
+      uniqueName(err, 'instance')
+    }
+    audit(ws.id, user.email, 'instance.updated', { id: data.id, name: data.name, url: data.url, keyChanged: Boolean(data.adminKey) })
     return { version }
   })
 
 export const testInstance = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(byId))
   .handler(async ({ data }) => {
-    const row = db().prepare('SELECT url, admin_key_enc FROM instances WHERE id = ?').get(data.id) as
+    const { ws } = await requireWorkspace('run')
+    const row = db().prepare('SELECT url, admin_key_enc FROM instances WHERE id = ? AND workspace_id = ?').get(data.id, ws.id) as
       | { url: string; admin_key_enc: string }
       | undefined
     if (!row) throw new Error('Instance not found')
@@ -275,12 +343,10 @@ export const testInstance = createServerFn({ method: 'POST' })
   })
 
 export const deleteInstance = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(byId))
-  .handler(async ({ data, context }) => {
-    db().prepare('DELETE FROM instances WHERE id = ?').run(data.id)
-    syncSchedules()
-    audit(context.user.email, 'instance.deleted', data)
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    await softDelete(ws.id, 'instance', data.id, user.email)
   })
 
 // ── Destinations ─────────────────────────────────────────────
@@ -305,9 +371,9 @@ const destinationInput = z.discriminatedUnion('kind', [
 ])
 
 export const addDestination = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(destinationInput))
-  .handler(async ({ data, context }) => {
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
     const id = randomUUID()
     const row: DestinationRow =
       data.kind === 's3'
@@ -327,29 +393,32 @@ export const addDestination = createServerFn({ method: 'POST' })
           }
         : { id, name: data.name, kind: 'local', config: JSON.stringify({ root: data.root }), secret_enc: null }
     await openDestination(row).test()
-    db()
-      .prepare('INSERT INTO destinations (id, name, kind, config, secret_enc, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(row.id, row.name, row.kind, row.config, row.secret_enc, Date.now())
-    audit(context.user.email, 'destination.created', { id, name: data.name, kind: data.kind })
+    try {
+      db()
+        .prepare('INSERT INTO destinations (id, workspace_id, name, kind, config, secret_enc, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(row.id, ws.id, row.name, row.kind, row.config, row.secret_enc, Date.now())
+    } catch (err) {
+      uniqueName(err, 'destination')
+    }
+    audit(ws.id, user.email, 'destination.created', { id, name: data.name, kind: data.kind })
     return { id }
   })
 
 export const testDestination = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(byId))
   .handler(async ({ data }) => {
-    const row = db().prepare('SELECT * FROM destinations WHERE id = ?').get(data.id) as DestinationRow | undefined
+    const { ws } = await requireWorkspace('run')
+    const row = db().prepare('SELECT * FROM destinations WHERE id = ? AND workspace_id = ?').get(data.id, ws.id) as DestinationRow | undefined
     if (!row) throw new Error('Destination not found')
     await openDestination(row).test()
     return { ok: true }
   })
 
 export const deleteDestination = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(byId))
-  .handler(async ({ data, context }) => {
-    db().prepare('DELETE FROM destinations WHERE id = ?').run(data.id)
-    audit(context.user.email, 'destination.deleted', data)
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    await softDelete(ws.id, 'destination', data.id, user.email)
   })
 
 // ── Jobs ─────────────────────────────────────────────────────
@@ -373,8 +442,11 @@ const jobInput = z.object({
   keepMonthly: keep,
 })
 
-function writeJob(id: string, data: z.infer<typeof jobInput>, isNew: boolean) {
-  if (data.encrypt && !encryptionRecipient()) throw new Error('Create an encryption key in Settings first')
+function writeJob(ws: string, id: string, data: z.infer<typeof jobInput>, isNew: boolean) {
+  if (data.encrypt && !encryptionRecipient(ws)) throw new Error('Create an encryption key in Workspace settings first')
+  const owned = (table: string, ids: string[]) =>
+    ids.every((x) => db().prepare(`SELECT 1 FROM ${table} WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL`).get(x, ws))
+  if (!owned('instances', [data.instanceId]) || !owned('destinations', data.destinationIds)) throw new Error('Unknown instance or destination')
   db().transaction(() => {
     const values = [
       data.name,
@@ -390,17 +462,18 @@ function writeJob(id: string, data: z.infer<typeof jobInput>, isNew: boolean) {
     if (isNew) {
       db()
         .prepare(
-          `INSERT INTO jobs (name, instance_id, include_storage, encrypt, cron, keep_last, keep_daily, keep_weekly, keep_monthly, id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO jobs (name, instance_id, include_storage, encrypt, cron, keep_last, keep_daily, keep_weekly, keep_monthly, id, workspace_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(...values, id, Date.now())
+        .run(...values, id, ws, Date.now())
     } else {
-      db()
+      const res = db()
         .prepare(
           `UPDATE jobs SET name = ?, instance_id = ?, include_storage = ?, encrypt = ?, cron = ?, keep_last = ?, keep_daily = ?,
-           keep_weekly = ?, keep_monthly = ? WHERE id = ?`,
+           keep_weekly = ?, keep_monthly = ? WHERE id = ? AND workspace_id = ?`,
         )
-        .run(...values, id)
+        .run(...values, id, ws)
+      if (res.changes === 0) throw new Error('Job not found')
       db().prepare('DELETE FROM job_destinations WHERE job_id = ?').run(id)
     }
     const link = db().prepare('INSERT INTO job_destinations (job_id, destination_id) VALUES (?, ?)')
@@ -410,54 +483,52 @@ function writeJob(id: string, data: z.infer<typeof jobInput>, isNew: boolean) {
 }
 
 export const addJob = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(jobInput))
-  .handler(async ({ data, context }) => {
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
     const id = randomUUID()
-    writeJob(id, data, true)
-    audit(context.user.email, 'job.created', { id, ...data })
+    writeJob(ws.id, id, data, true)
+    audit(ws.id, user.email, 'job.created', { id, ...data })
     return { id }
   })
 
 export const updateJob = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(jobInput.extend({ id: z.string() })))
-  .handler(async ({ data: { id, ...data }, context }) => {
-    writeJob(id, data, false)
-    audit(context.user.email, 'job.updated', { id, ...data })
+  .handler(async ({ data: { id, ...data } }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    writeJob(ws.id, id, data, false)
+    audit(ws.id, user.email, 'job.updated', { id, ...data })
   })
 
 export const setJobEnabled = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(z.object({ id: z.string(), enabled: z.boolean() })))
-  .handler(async ({ data, context }) => {
-    db().prepare('UPDATE jobs SET enabled = ? WHERE id = ?').run(data.enabled ? 1 : 0, data.id)
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    db().prepare('UPDATE jobs SET enabled = ? WHERE id = ? AND workspace_id = ?').run(data.enabled ? 1 : 0, data.id, ws.id)
     syncSchedules()
-    audit(context.user.email, data.enabled ? 'job.enabled' : 'job.disabled', { id: data.id })
+    audit(ws.id, user.email, data.enabled ? 'job.enabled' : 'job.disabled', { id: data.id })
   })
 
 export const deleteJob = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(byId))
-  .handler(async ({ data, context }) => {
-    db().prepare('DELETE FROM jobs WHERE id = ?').run(data.id)
-    syncSchedules()
-    audit(context.user.email, 'job.deleted', data)
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    await softDelete(ws.id, 'job', data.id, user.email)
   })
 
 export const runJobNow = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(byId))
-  .handler(async ({ data, context }) => {
-    const runId = startJob(data.id, `manual:${context.user.email}`)
-    audit(context.user.email, 'backup.started', { jobId: data.id, runId })
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('run')
+    if (!db().prepare('SELECT 1 FROM jobs WHERE id = ? AND workspace_id = ?').get(data.id, ws.id)) throw new Error('Job not found')
+    const runId = startJob(data.id, `manual:${user.email}`)
+    audit(ws.id, user.email, 'backup.started', { jobId: data.id, runId })
     return { runId }
   })
 
 // ── Restore ──────────────────────────────────────────────────
 
 export const restoreBackup = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(
     parse(
       z.object({
@@ -469,7 +540,10 @@ export const restoreBackup = createServerFn({ method: 'POST' })
       }),
     ),
   )
-  .handler(async ({ data, context }) => ({ restoreId: startRestore({ ...data, actor: context.user.email }) }))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('restore')
+    return { restoreId: startRestore({ ...data, workspaceId: ws.id, actor: user.email }) }
+  })
 
 // ── Notification channels ────────────────────────────────────
 
@@ -496,26 +570,6 @@ const channelInput = z.object({
   config: channelConfig,
 })
 
-export const getChannels = createServerFn({ method: 'GET' })
-  .middleware([requireUser])
-  .handler(async () => ({
-    channels: (
-      db().prepare('SELECT id, name, kind, config_enc, on_failure, on_success FROM channels ORDER BY name').all() as {
-        id: string
-        name: string
-        kind: ChannelConfig['kind']
-        config_enc: string
-        on_failure: number
-        on_success: number
-      }[]
-    ).map(({ config_enc, ...c }) => ({
-      ...c,
-      on_failure: Boolean(c.on_failure),
-      on_success: Boolean(c.on_success),
-      target: describeTarget(JSON.parse(decrypt(config_enc)) as ChannelConfig),
-    })),
-  }))
-
 function describeTarget(cfg: ChannelConfig) {
   switch (cfg.kind) {
     case 'telegram':
@@ -529,67 +583,385 @@ function describeTarget(cfg: ChannelConfig) {
   }
 }
 
+export const getChannels = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  return {
+    channels: (
+      db().prepare('SELECT id, name, kind, config_enc, on_failure, on_success FROM channels WHERE workspace_id = ? ORDER BY name').all(ws.id) as {
+        id: string
+        name: string
+        kind: ChannelConfig['kind']
+        config_enc: string
+        on_failure: number
+        on_success: number
+      }[]
+    ).map(({ config_enc, ...c }) => ({
+      ...c,
+      on_failure: Boolean(c.on_failure),
+      on_success: Boolean(c.on_success),
+      target: describeTarget(JSON.parse(decrypt(config_enc)) as ChannelConfig),
+    })),
+  }
+})
+
 export const addChannel = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(channelInput))
-  .handler(async ({ data, context }) => {
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
     const id = randomUUID()
     db()
-      .prepare('INSERT INTO channels (id, name, kind, config_enc, on_failure, on_success, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(id, data.name, data.config.kind, encrypt(JSON.stringify(data.config)), data.onFailure ? 1 : 0, data.onSuccess ? 1 : 0, Date.now())
-    audit(context.user.email, 'channel.created', { id, name: data.name, kind: data.config.kind })
+      .prepare('INSERT INTO channels (id, workspace_id, name, kind, config_enc, on_failure, on_success, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, ws.id, data.name, data.config.kind, encrypt(JSON.stringify(data.config)), data.onFailure ? 1 : 0, data.onSuccess ? 1 : 0, Date.now())
+    audit(ws.id, user.email, 'channel.created', { id, name: data.name, kind: data.config.kind })
     return { id }
   })
 
 export const setChannelEvents = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(z.object({ id: z.string(), onFailure: z.boolean(), onSuccess: z.boolean() })))
-  .handler(async ({ data, context }) => {
-    db().prepare('UPDATE channels SET on_failure = ?, on_success = ? WHERE id = ?').run(data.onFailure ? 1 : 0, data.onSuccess ? 1 : 0, data.id)
-    audit(context.user.email, 'channel.updated', data)
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    db()
+      .prepare('UPDATE channels SET on_failure = ?, on_success = ? WHERE id = ? AND workspace_id = ?')
+      .run(data.onFailure ? 1 : 0, data.onSuccess ? 1 : 0, data.id, ws.id)
+    audit(ws.id, user.email, 'channel.updated', data)
   })
 
 export const testChannel = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(byId))
-  .handler(async ({ data, context }) => {
-    const row = db().prepare('SELECT name, config_enc FROM channels WHERE id = ?').get(data.id) as
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    const row = db().prepare('SELECT name, config_enc FROM channels WHERE id = ? AND workspace_id = ?').get(data.id, ws.id) as
       | { name: string; config_enc: string }
       | undefined
     if (!row) throw new Error('Channel not found')
     await send(JSON.parse(decrypt(row.config_enc)) as ChannelConfig, {
       type: 'test',
       status: 'ok',
-      title: 'Test notification from Convex Backup Console',
-      details: [`Channel: ${row.name}`, `Sent by ${context.user.email}`],
+      title: `[${ws.name}] Test notification from Convex Backup Console`,
+      details: [`Channel: ${row.name}`, `Sent by ${user.email}`],
     })
   })
 
 export const deleteChannel = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
   .validator(parse(byId))
-  .handler(async ({ data, context }) => {
-    db().prepare('DELETE FROM channels WHERE id = ?').run(data.id)
-    audit(context.user.email, 'channel.deleted', data)
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    db().prepare('DELETE FROM channels WHERE id = ? AND workspace_id = ?').run(data.id, ws.id)
+    audit(ws.id, user.email, 'channel.deleted', data)
   })
 
-// ── Encryption ───────────────────────────────────────────────
+// ── Workspace settings ───────────────────────────────────────
 
-export const getEncryption = createServerFn({ method: 'GET' })
-  .middleware([requireUser])
-  .handler(async () => ({ recipient: encryptionRecipient() }))
+const TIMEZONES = Intl.supportedValuesOf('timeZone')
 
-export const createEncryption = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
-  .handler(async ({ context }) => {
-    const key = await createEncryptionKey()
-    audit(context.user.email, 'encryption.key_created', { recipient: key.recipient })
-    return key
+export const getWorkspace = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  const s = workspaceSettings(ws.id)
+  return {
+    workspace: ws,
+    settings: {
+      description: s.description,
+      timezone: s.timezone,
+      default_keep_last: s.default_keep_last,
+      default_keep_daily: s.default_keep_daily,
+      default_keep_weekly: s.default_keep_weekly,
+      default_keep_monthly: s.default_keep_monthly,
+      default_encrypt: Boolean(s.default_encrypt),
+      default_include_storage: Boolean(s.default_include_storage),
+      stale_hours: s.stale_hours,
+      trash_days: s.trash_days,
+      purge_backups: Boolean(s.purge_backups),
+      recipient: s.age_recipient,
+    },
+    timezones: ['UTC', ...TIMEZONES.filter((t) => t !== 'UTC')],
+  }
+})
+
+export const updateWorkspaceGeneral = createServerFn({ method: 'POST' })
+  .validator(
+    parse(
+      z.object({
+        name: z.string().trim().min(1).max(60),
+        slug,
+        description: z.string().trim().max(280).optional(),
+        timezone: z.string().refine((t) => t === 'UTC' || TIMEZONES.includes(t), 'Unknown timezone'),
+      }),
+    ),
+  )
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('settings')
+    await auth().api.updateOrganization({ headers: headers(), body: { organizationId: ws.id, data: { name: data.name, slug: data.slug } } })
+    db().prepare('UPDATE workspace_settings SET description = ?, timezone = ? WHERE workspace_id = ?').run(data.description || null, data.timezone, ws.id)
+    syncSchedules()
+    audit(ws.id, user.email, 'workspace.updated', data)
   })
 
-export const revealEncryptionKey = createServerFn({ method: 'POST' })
-  .middleware([requireUser])
-  .handler(async ({ context }) => {
-    audit(context.user.email, 'encryption.key_revealed')
-    return { identity: encryptionIdentity() }
+const optKeep = z.number().int().positive().nullable()
+export const updateWorkspaceDefaults = createServerFn({ method: 'POST' })
+  .validator(
+    parse(
+      z.object({
+        keepLast: optKeep,
+        keepDaily: optKeep,
+        keepWeekly: optKeep,
+        keepMonthly: optKeep,
+        encrypt: z.boolean(),
+        includeStorage: z.boolean(),
+        staleHours: z.number().int().min(1).max(24 * 31),
+      }),
+    ),
+  )
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('settings')
+    db()
+      .prepare(
+        `UPDATE workspace_settings SET default_keep_last = ?, default_keep_daily = ?, default_keep_weekly = ?, default_keep_monthly = ?,
+         default_encrypt = ?, default_include_storage = ?, stale_hours = ? WHERE workspace_id = ?`,
+      )
+      .run(data.keepLast, data.keepDaily, data.keepWeekly, data.keepMonthly, data.encrypt ? 1 : 0, data.includeStorage ? 1 : 0, data.staleHours, ws.id)
+    audit(ws.id, user.email, 'workspace.defaults_updated', data)
+  })
+
+export const updateDeletionPolicy = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ trashDays: z.number().int().min(0).max(365), purgeBackups: z.boolean() })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('purge')
+    db().prepare('UPDATE workspace_settings SET trash_days = ?, purge_backups = ? WHERE workspace_id = ?').run(data.trashDays, data.purgeBackups ? 1 : 0, ws.id)
+    audit(ws.id, user.email, 'workspace.deletion_policy_updated', data)
+  })
+
+export const createEncryption = createServerFn({ method: 'POST' }).handler(async () => {
+  const { ws, user } = await requireWorkspace('encryptionKey')
+  const key = await createEncryptionKey(ws.id)
+  audit(ws.id, user.email, 'encryption.key_created', { recipient: key.recipient })
+  return key
+})
+
+export const revealEncryptionKey = createServerFn({ method: 'POST' }).handler(async () => {
+  const { ws, user } = await requireWorkspace('encryptionKey')
+  audit(ws.id, user.email, 'encryption.key_revealed')
+  return { identity: encryptionIdentity(ws.id), recipient: encryptionRecipient(ws.id)! }
+})
+
+export const deleteWorkspace = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ confirm: z.string() })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('deleteWorkspace')
+    if (data.confirm !== ws.name) throw new Error(`Type "${ws.name}" to confirm`)
+    softDeleteWorkspace(ws.id, user.email)
+    if (workspaceSettings(ws.id).trash_days === 0) await purgeWorkspace(ws.id, user.email)
+  })
+
+// ── Members & invitations ────────────────────────────────────
+
+const role = z.enum(ROLES)
+
+export const getMembers = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws, user } = await requireWorkspace('view')
+  const members = db()
+    .prepare(
+      `SELECT m.id, m.role, m.createdAt AS created_at, u.id AS user_id, u.name, u.email, u.twoFactorEnabled AS two_factor
+       FROM member m JOIN user u ON u.id = m.userId WHERE m.organizationId = ? ORDER BY u.email`,
+    )
+    .all(ws.id) as { id: string; role: string; created_at: string; user_id: string; name: string; email: string; two_factor: number }[]
+  const invitations = can(ws.role, 'members')
+    ? (db()
+        .prepare(
+          "SELECT id, email, role, status, expiresAt AS expires_at FROM invitation WHERE organizationId = ? AND status = 'pending' ORDER BY createdAt DESC",
+        )
+        .all(ws.id) as { id: string; email: string; role: string; status: string; expires_at: string }[]).map((i) => ({
+        ...i,
+        link: invitationUrl(i.id),
+        expired: new Date(i.expires_at).getTime() < Date.now(),
+      }))
+    : []
+  return { members: members.map((m) => ({ ...m, two_factor: Boolean(m.two_factor), you: m.user_id === user.id })), invitations, smtp: Boolean(getSmtp()) }
+})
+
+export const inviteMember = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ email: z.email().transform((e) => e.toLowerCase()), role })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('members')
+    const inv = await auth().api.createInvitation({
+      headers: headers(),
+      body: { email: data.email, role: data.role, organizationId: ws.id, resend: true },
+    })
+    audit(ws.id, user.email, 'member.invited', data)
+    return { link: invitationUrl(inv.id), emailed: Boolean(getSmtp()) }
+  })
+
+export const cancelInvite = createServerFn({ method: 'POST' })
+  .validator(parse(byId))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('members')
+    await auth().api.cancelInvitation({ headers: headers(), body: { invitationId: data.id } })
+    audit(ws.id, user.email, 'member.invitation_cancelled', data)
+  })
+
+function ownerCount(ws: string) {
+  return (db().prepare("SELECT COUNT(*) AS n FROM member WHERE organizationId = ? AND role = 'owner'").get(ws) as { n: number }).n
+}
+
+export const changeMemberRole = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ memberId: z.string(), role })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('members')
+    const m = db().prepare('SELECT role FROM member WHERE id = ? AND organizationId = ?').get(data.memberId, ws.id) as { role: string } | undefined
+    if (!m) throw new Error('Member not found')
+    if (m.role === 'owner' && data.role !== 'owner' && ownerCount(ws.id) <= 1) throw new Error('A workspace needs at least one owner')
+    await auth().api.updateMemberRole({ headers: headers(), body: { memberId: data.memberId, role: data.role, organizationId: ws.id } })
+    audit(ws.id, user.email, 'member.role_changed', data)
+  })
+
+export const removeMember = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ memberId: z.string() })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('members')
+    const m = db().prepare('SELECT role FROM member WHERE id = ? AND organizationId = ?').get(data.memberId, ws.id) as { role: string } | undefined
+    if (!m) throw new Error('Member not found')
+    if (m.role === 'owner' && ownerCount(ws.id) <= 1) throw new Error('A workspace needs at least one owner')
+    await auth().api.removeMember({ headers: headers(), body: { memberIdOrEmail: data.memberId, organizationId: ws.id } })
+    audit(ws.id, user.email, 'member.removed', data)
+  })
+
+/** Public: details shown on the invitation page. */
+export const getInvitation = createServerFn({ method: 'GET' })
+  .validator(parse(byId))
+  .handler(async ({ data }) => {
+    await ensureBooted()
+    const inv = db()
+      .prepare(
+        `SELECT i.id, i.email, i.role, i.status, i.expiresAt AS expires_at, o.name AS workspace, o.logo
+         FROM invitation i JOIN organization o ON o.id = i.organizationId WHERE i.id = ?`,
+      )
+      .get(data.id) as { id: string; email: string; role: string; status: string; expires_at: string; workspace: string; logo: string | null } | undefined
+    if (!inv) return null
+    const userExists = Boolean(db().prepare('SELECT 1 FROM user WHERE email = ?').get(inv.email))
+    return { ...inv, expired: new Date(inv.expires_at).getTime() < Date.now(), userExists }
+  })
+
+/** Public: creates the account for a pending invitation (sign-up is otherwise disabled). */
+export const registerFromInvitation = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ id: z.string(), name: z.string().trim().min(1).max(80), password: z.string().min(12).max(128) })))
+  .handler(async ({ data }) => {
+    await ensureBooted()
+    const inv = db().prepare("SELECT email, expiresAt AS expires_at FROM invitation WHERE id = ? AND status = 'pending'").get(data.id) as
+      | { email: string; expires_at: string }
+      | undefined
+    if (!inv || new Date(inv.expires_at).getTime() < Date.now()) throw new Error('This invitation is no longer valid')
+    if (db().prepare('SELECT 1 FROM user WHERE email = ?').get(inv.email)) throw new Error('An account already exists — sign in instead')
+    await createUserWithPassword({ email: inv.email, name: data.name, password: data.password })
+    return { email: inv.email }
+  })
+
+// ── Trash ────────────────────────────────────────────────────
+
+export const getTrash = createServerFn({ method: 'GET' }).handler(async () => {
+  const { ws } = await requireWorkspace('view')
+  const s = workspaceSettings(ws.id)
+  const items = db()
+    .prepare(
+      `SELECT 'instance' AS kind, id, name, deleted_at, NULL AS parent FROM instances WHERE workspace_id = ? AND deleted_at IS NOT NULL
+       UNION ALL
+       SELECT 'job', j.id, j.name, j.deleted_at, CASE WHEN i.deleted_at = j.deleted_at THEN i.name END FROM jobs j
+         JOIN instances i ON i.id = j.instance_id WHERE j.workspace_id = ? AND j.deleted_at IS NOT NULL
+       UNION ALL
+       SELECT 'destination', id, name, deleted_at, NULL FROM destinations WHERE workspace_id = ? AND deleted_at IS NOT NULL
+       ORDER BY deleted_at DESC`,
+    )
+    .all(ws.id, ws.id, ws.id) as { kind: 'instance' | 'job' | 'destination'; id: string; name: string; deleted_at: number; parent: string | null }[]
+  return {
+    items: items.map((i) => ({ ...i, purge_at: i.deleted_at + s.trash_days * 86_400_000 })),
+    trash_days: s.trash_days,
+    purge_backups: Boolean(s.purge_backups),
+  }
+})
+
+const trashInput = z.object({ kind: z.enum(['instance', 'job', 'destination']), id: z.string() })
+
+export const restoreFromTrash = createServerFn({ method: 'POST' })
+  .validator(parse(trashInput))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    restoreItem(ws.id, data.kind, data.id, user.email)
+  })
+
+export const purgeNow = createServerFn({ method: 'POST' })
+  .validator(parse(trashInput))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('purge')
+    await purgeItem(ws.id, data.kind, data.id, user.email)
+  })
+
+// ── Platform (platform admins) ───────────────────────────────
+
+export const getPlatform = createServerFn({ method: 'GET' }).handler(async () => {
+  await requirePlatformAdmin()
+  const workspaces = db()
+    .prepare(
+      `SELECT o.id, o.name, o.slug, o.logo, s.deleted_at, s.trash_days,
+         (SELECT COUNT(*) FROM member m WHERE m.organizationId = o.id) AS members,
+         (SELECT COUNT(*) FROM instances i WHERE i.workspace_id = o.id AND i.deleted_at IS NULL) AS instances
+       FROM organization o LEFT JOIN workspace_settings s ON s.workspace_id = o.id ORDER BY o.name`,
+    )
+    .all() as { id: string; name: string; slug: string; logo: string | null; deleted_at: number | null; trash_days: number; members: number; instances: number }[]
+  const users = db()
+    .prepare(
+      `SELECT u.id, u.name, u.email, u.role, u.twoFactorEnabled AS two_factor, u.createdAt AS created_at,
+         (SELECT COUNT(*) FROM member m WHERE m.userId = u.id) AS workspaces
+       FROM user u ORDER BY u.email`,
+    )
+    .all() as { id: string; name: string; email: string; role: string | null; two_factor: number; created_at: string; workspaces: number }[]
+  const smtp = getSmtp()
+  return {
+    workspaces,
+    users: users.map((u) => ({ ...u, isAdmin: u.role === 'admin', two_factor: Boolean(u.two_factor) })),
+    smtp: smtp ? { ...smtp, pass: smtp.pass ? '••••••••' : '' } : null,
+  }
+})
+
+export const setPlatformAdmin = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ userId: z.string(), admin: z.boolean() })))
+  .handler(async ({ data }) => {
+    const ctx = await requirePlatformAdmin()
+    if (data.userId === ctx.user.id && !data.admin) throw new Error("You can't remove your own platform admin role")
+    db().prepare('UPDATE user SET role = ? WHERE id = ?').run(data.admin ? 'admin' : 'user', data.userId)
+    audit(null, ctx.user.email, data.admin ? 'platform.admin_granted' : 'platform.admin_revoked', { userId: data.userId })
+  })
+
+const smtpInput = z.object({
+  host: z.string().trim().min(1),
+  port: z.number().int().positive(),
+  secure: z.boolean(),
+  user: z.string().trim().optional(),
+  pass: z.string().optional(),
+  from: z.string().trim().min(3),
+})
+
+export const saveSmtpSettings = createServerFn({ method: 'POST' })
+  .validator(parse(smtpInput.nullable()))
+  .handler(async ({ data }) => {
+    const ctx = await requirePlatformAdmin()
+    if (data && data.pass === '••••••••') data.pass = getSmtp()?.pass
+    saveSmtp(data)
+    audit(null, ctx.user.email, data ? 'platform.smtp_updated' : 'platform.smtp_removed')
+  })
+
+export const testSmtp = createServerFn({ method: 'POST' }).handler(async () => {
+  const ctx = await requirePlatformAdmin()
+  await sendMail(ctx.user.email, 'Convex Backup Console: SMTP test', 'SMTP is configured correctly. Invitations will be emailed.')
+})
+
+export const restoreWorkspaceFromTrash = createServerFn({ method: 'POST' })
+  .validator(parse(byId))
+  .handler(async ({ data }) => {
+    const ctx = await requirePlatformAdmin()
+    restoreWorkspace(data.id, ctx.user.email)
+  })
+
+export const purgeWorkspaceNow = createServerFn({ method: 'POST' })
+  .validator(parse(byId))
+  .handler(async ({ data }) => {
+    const ctx = await requirePlatformAdmin()
+    await purgeWorkspace(data.id, ctx.user.email)
   })

@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~
 import { Switch } from '~/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { useAction } from '~/lib/use-action'
+import { useWorkspace } from '~/lib/use-workspace'
 import { addChannel, deleteChannel, getChannels, setChannelEvents, testChannel } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/notifications')({
@@ -39,13 +40,15 @@ function Notifications() {
   const setEvents = useServerFn(setChannelEvents)
   const del = useServerFn(deleteChannel)
   const { run } = useAction()
+  const { can: allowed } = useWorkspace()
+  const manage = allowed('manage')
 
   return (
     <>
       <PageHeader
         title="Notifications"
         description="Get told when a backup or restore fails — or, optionally, when it succeeds."
-        actions={<Button onClick={() => setOpen(true)}><Plus /> Add channel</Button>}
+        actions={manage && <Button onClick={() => setOpen(true)}><Plus /> Add channel</Button>}
       />
       <PageBody>
         {channels.length === 0 ? (
@@ -55,7 +58,7 @@ function Notifications() {
               <EmptyTitle>No channels yet</EmptyTitle>
               <EmptyDescription>Without alerts, a failing nightly backup can go unnoticed for weeks.</EmptyDescription>
             </EmptyHeader>
-            <EmptyContent><Button onClick={() => setOpen(true)}><Plus /> Add channel</Button></EmptyContent>
+            {manage && <EmptyContent><Button onClick={() => setOpen(true)}><Plus /> Add channel</Button></EmptyContent>}
           </Empty>
         ) : (
           <Card className="py-0">
@@ -80,13 +83,13 @@ function Notifications() {
                       </TableCell>
                       <TableCell className="text-muted-foreground font-mono text-xs">{c.target}</TableCell>
                       <TableCell>
-                        <Switch checked={c.on_failure} aria-label="Notify on failure" onCheckedChange={(v) => run(() => setEvents({ data: { id: c.id, onFailure: v, onSuccess: c.on_success } }))} />
+                        <Switch disabled={!manage} checked={c.on_failure} aria-label="Notify on failure" onCheckedChange={(v) => run(() => setEvents({ data: { id: c.id, onFailure: v, onSuccess: c.on_success } }))} />
                       </TableCell>
                       <TableCell>
-                        <Switch checked={c.on_success} aria-label="Notify on success" onCheckedChange={(v) => run(() => setEvents({ data: { id: c.id, onFailure: c.on_failure, onSuccess: v } }))} />
+                        <Switch disabled={!manage} checked={c.on_success} aria-label="Notify on success" onCheckedChange={(v) => run(() => setEvents({ data: { id: c.id, onFailure: c.on_failure, onSuccess: v } }))} />
                       </TableCell>
                       <TableCell className="pr-4 text-right">
-                        <div className="flex justify-end gap-1">
+                        {manage && <div className="flex justify-end gap-1">
                           <Button size="sm" variant="outline" onClick={() => run(() => test({ data: { id: c.id } }), { success: `Test sent to ${c.name}` })}>
                             <Send /> Test
                           </Button>
@@ -96,7 +99,7 @@ function Notifications() {
                             description="You will no longer receive alerts on this channel."
                             onConfirm={() => run(() => del({ data: { id: c.id } }), { success: 'Channel deleted' })}
                           />
-                        </div>
+                        </div>}
                       </TableCell>
                     </TableRow>
                   )

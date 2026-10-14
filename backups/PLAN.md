@@ -51,7 +51,14 @@ Streaming: download → age encrypt → fan-out multipart uploads; never buffer 
 
 Later: partial/table restore, instance self-registration, more users/roles, daily digest.
 
-**Status (2026-10-14):** everything in v1 is built and tested locally (`testing/TESTING.md`).
+**Workspaces (added 2026-10-14):** Better Auth organization plugin (workspaces, members, invitations,
+active workspace per session) + admin plugin (platform admins). Every app table carries `workspace_id`;
+every server function resolves the active workspace and checks the role (`src/lib/permissions.ts`).
+Per-workspace settings: logo, name/slug/description, timezone (cron runs in it), job defaults, stale
+threshold, deletion policy (trash days + purge backup files), age key. Existing single-tenant data is
+migrated into a "Default" workspace on first boot.
+
+**Status (2026-10-14):** everything above is built and tested locally (`testing/TESTING.md`).
 
 ## Onboarding a new instance (manual, ~2 min)
 

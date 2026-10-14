@@ -35,9 +35,9 @@ const PRESETS: Record<string, string> = {
   '0 * * * *': 'Every hour',
   '0 */6 * * *': 'Every 6 hours',
   '0 */12 * * *': 'Every 12 hours',
-  '0 3 * * *': 'Daily at 03:00 UTC',
-  '0 3 * * 0': 'Weekly, Sunday 03:00 UTC',
-  '0 3 1 * *': 'Monthly, 1st at 03:00 UTC',
+  '0 3 * * *': 'Daily at 03:00',
+  '0 3 * * 0': 'Weekly, Sunday 03:00',
+  '0 3 1 * *': 'Monthly, 1st at 03:00',
 }
 export const CRON_PRESETS = Object.entries(PRESETS)
 

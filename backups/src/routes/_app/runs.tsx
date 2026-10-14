@@ -20,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
 import { duration, formatBytes, formatDate, timeAgo } from '~/lib/format'
 import { useAction, usePolling } from '~/lib/use-action'
+import { useWorkspace } from '~/lib/use-workspace'
 import { getRuns, restoreBackup, type RunView } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/runs')({
@@ -44,6 +45,7 @@ function Runs() {
   const search = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
   const [source, setSource] = useState<Source | null>(null)
+  const { can: allowed } = useWorkspace()
   usePolling(data.runs.some((r) => r.status === 'running') || data.restores.some((r) => r.status === 'running'))
   const destName = (id: string) => data.destinations.find((d) => d.id === id)?.name ?? 'Deleted destination'
   const jobName = search.job ? data.runs.find((r) => r.job_id === search.job)?.job_name : null
@@ -128,7 +130,7 @@ function Runs() {
                             </div>
                           </TableCell>
                           <TableCell className="pr-4 text-right">
-                            {available.length > 0 && (
+                            {available.length > 0 && allowed('download') && (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button size="sm" variant="outline">Use backup</Button>
@@ -138,9 +140,11 @@ function Runs() {
                                     <div key={c.destination_id}>
                                       {idx > 0 && <DropdownMenuSeparator />}
                                       <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">From {destName(c.destination_id)}</DropdownMenuLabel>
-                                      <DropdownMenuItem onClick={() => setSource({ run: r, destinationId: c.destination_id, key: c.key })}>
-                                        <RotateCcw /> Restore…
-                                      </DropdownMenuItem>
+                                      {allowed('restore') && (
+                                        <DropdownMenuItem onClick={() => setSource({ run: r, destinationId: c.destination_id, key: c.key })}>
+                                          <RotateCcw /> Restore…
+                                        </DropdownMenuItem>
+                                      )}
                                       <DropdownMenuItem asChild>
                                         <a href={`/api/download?run=${r.id}&dest=${c.destination_id}`}><Download /> Download zip</a>
                                       </DropdownMenuItem>

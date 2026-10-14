@@ -11,18 +11,26 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as NoWorkspaceRouteImport } from './routes/no-workspace'
 import { Route as SecurityRouteImport } from './routes/security'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppAccountRouteImport } from './routes/_app/account'
 import { Route as AppAuditRouteImport } from './routes/_app/audit'
 import { Route as AppDestinationsRouteImport } from './routes/_app/destinations'
 import { Route as AppInstancesRouteImport } from './routes/_app/instances'
 import { Route as AppJobsRouteImport } from './routes/_app/jobs'
+import { Route as AppMembersRouteImport } from './routes/_app/members'
 import { Route as AppNotificationsRouteImport } from './routes/_app/notifications'
+import { Route as AppPlatformRouteImport } from './routes/_app/platform'
 import { Route as AppRunsRouteImport } from './routes/_app/runs'
-import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppTrashRouteImport } from './routes/_app/trash'
+import { Route as AppWorkspaceRouteImport } from './routes/_app/workspace'
 import { Route as ApiDownloadRouteImport } from './routes/api/download'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as InviteIdRouteImport } from './routes/invite/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiLogoIndexRouteImport } from './routes/api/logo/index'
+import { Route as ApiLogoIdRouteImport } from './routes/api/logo/$id'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -33,6 +41,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NoWorkspaceRoute = NoWorkspaceRouteImport.update({
+  id: '/no-workspace',
+  path: '/no-workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SecurityRoute = SecurityRouteImport.update({
   id: '/security',
   path: '/security',
@@ -41,6 +54,11 @@ const SecurityRoute = SecurityRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccountRoute = AppAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAuditRoute = AppAuditRouteImport.update({
@@ -63,9 +81,19 @@ const AppJobsRoute = AppJobsRouteImport.update({
   path: '/jobs',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMembersRoute = AppMembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppNotificationsRoute = AppNotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPlatformRoute = AppPlatformRouteImport.update({
+  id: '/platform',
+  path: '/platform',
   getParentRoute: () => AppRoute,
 } as any)
 const AppRunsRoute = AppRunsRouteImport.update({
@@ -73,9 +101,14 @@ const AppRunsRoute = AppRunsRouteImport.update({
   path: '/runs',
   getParentRoute: () => AppRoute,
 } as any)
-const AppSettingsRoute = AppSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
+const AppTrashRoute = AppTrashRouteImport.update({
+  id: '/trash',
+  path: '/trash',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWorkspaceRoute = AppWorkspaceRouteImport.update({
+  id: '/workspace',
+  path: '/workspace',
   getParentRoute: () => AppRoute,
 } as any)
 const ApiDownloadRoute = ApiDownloadRouteImport.update({
@@ -88,115 +121,182 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InviteIdRoute = InviteIdRouteImport.update({
+  id: '/invite/$id',
+  path: '/invite/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiLogoIndexRoute = ApiLogoIndexRouteImport.update({
+  id: '/api/logo/',
+  path: '/api/logo/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiLogoIdRoute = ApiLogoIdRouteImport.update({
+  id: '/api/logo/$id',
+  path: '/api/logo/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
+  '/no-workspace': typeof NoWorkspaceRoute
   '/security': typeof SecurityRoute
+  '/account': typeof AppAccountRoute
   '/audit': typeof AppAuditRoute
   '/destinations': typeof AppDestinationsRoute
   '/instances': typeof AppInstancesRoute
   '/jobs': typeof AppJobsRoute
+  '/members': typeof AppMembersRoute
   '/notifications': typeof AppNotificationsRoute
+  '/platform': typeof AppPlatformRoute
   '/runs': typeof AppRunsRoute
-  '/settings': typeof AppSettingsRoute
+  '/trash': typeof AppTrashRoute
+  '/workspace': typeof AppWorkspaceRoute
   '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
+  '/invite/$id': typeof InviteIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/logo/$id': typeof ApiLogoIdRoute
+  '/api/logo/': typeof ApiLogoIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/no-workspace': typeof NoWorkspaceRoute
   '/security': typeof SecurityRoute
+  '/account': typeof AppAccountRoute
   '/audit': typeof AppAuditRoute
   '/destinations': typeof AppDestinationsRoute
   '/instances': typeof AppInstancesRoute
   '/jobs': typeof AppJobsRoute
+  '/members': typeof AppMembersRoute
   '/notifications': typeof AppNotificationsRoute
+  '/platform': typeof AppPlatformRoute
   '/runs': typeof AppRunsRoute
-  '/settings': typeof AppSettingsRoute
+  '/trash': typeof AppTrashRoute
+  '/workspace': typeof AppWorkspaceRoute
   '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
+  '/invite/$id': typeof InviteIdRoute
   '/': typeof AppIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/logo/$id': typeof ApiLogoIdRoute
+  '/api/logo': typeof ApiLogoIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/no-workspace': typeof NoWorkspaceRoute
   '/security': typeof SecurityRoute
+  '/_app/account': typeof AppAccountRoute
   '/_app/audit': typeof AppAuditRoute
   '/_app/destinations': typeof AppDestinationsRoute
   '/_app/instances': typeof AppInstancesRoute
   '/_app/jobs': typeof AppJobsRoute
+  '/_app/members': typeof AppMembersRoute
   '/_app/notifications': typeof AppNotificationsRoute
+  '/_app/platform': typeof AppPlatformRoute
   '/_app/runs': typeof AppRunsRoute
-  '/_app/settings': typeof AppSettingsRoute
+  '/_app/trash': typeof AppTrashRoute
+  '/_app/workspace': typeof AppWorkspaceRoute
   '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
+  '/invite/$id': typeof InviteIdRoute
   '/_app/': typeof AppIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/logo/$id': typeof ApiLogoIdRoute
+  '/api/logo/': typeof ApiLogoIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/login'
+    | '/no-workspace'
     | '/security'
+    | '/account'
     | '/audit'
     | '/destinations'
     | '/instances'
     | '/jobs'
+    | '/members'
     | '/notifications'
+    | '/platform'
     | '/runs'
-    | '/settings'
+    | '/trash'
+    | '/workspace'
     | '/api/download'
     | '/api/health'
+    | '/invite/$id'
     | '/api/auth/$'
+    | '/api/logo/$id'
+    | '/api/logo/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/no-workspace'
     | '/security'
+    | '/account'
     | '/audit'
     | '/destinations'
     | '/instances'
     | '/jobs'
+    | '/members'
     | '/notifications'
+    | '/platform'
     | '/runs'
-    | '/settings'
+    | '/trash'
+    | '/workspace'
     | '/api/download'
     | '/api/health'
+    | '/invite/$id'
     | '/'
     | '/api/auth/$'
+    | '/api/logo/$id'
+    | '/api/logo'
   id:
     | '__root__'
     | '/_app'
     | '/login'
+    | '/no-workspace'
     | '/security'
+    | '/_app/account'
     | '/_app/audit'
     | '/_app/destinations'
     | '/_app/instances'
     | '/_app/jobs'
+    | '/_app/members'
     | '/_app/notifications'
+    | '/_app/platform'
     | '/_app/runs'
-    | '/_app/settings'
+    | '/_app/trash'
+    | '/_app/workspace'
     | '/api/download'
     | '/api/health'
+    | '/invite/$id'
     | '/_app/'
     | '/api/auth/$'
+    | '/api/logo/$id'
+    | '/api/logo/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  NoWorkspaceRoute: typeof NoWorkspaceRoute
   SecurityRoute: typeof SecurityRoute
   ApiDownloadRoute: typeof ApiDownloadRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  InviteIdRoute: typeof InviteIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiLogoIdRoute: typeof ApiLogoIdRoute
+  ApiLogoIndexRoute: typeof ApiLogoIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -215,6 +315,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/no-workspace': {
+      id: '/no-workspace'
+      path: '/no-workspace'
+      fullPath: '/no-workspace'
+      preLoaderRoute: typeof NoWorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/security': {
       id: '/security'
       path: '/security'
@@ -227,6 +334,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/account': {
+      id: '/_app/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AppAccountRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/audit': {
@@ -257,11 +371,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppJobsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/members': {
+      id: '/_app/members'
+      path: '/members'
+      fullPath: '/members'
+      preLoaderRoute: typeof AppMembersRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/notifications': {
       id: '/_app/notifications'
       path: '/notifications'
       fullPath: '/notifications'
       preLoaderRoute: typeof AppNotificationsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/platform': {
+      id: '/_app/platform'
+      path: '/platform'
+      fullPath: '/platform'
+      preLoaderRoute: typeof AppPlatformRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/runs': {
@@ -271,11 +399,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRunsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/settings': {
-      id: '/_app/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof AppSettingsRouteImport
+    '/_app/trash': {
+      id: '/_app/trash'
+      path: '/trash'
+      fullPath: '/trash'
+      preLoaderRoute: typeof AppTrashRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/workspace': {
+      id: '/_app/workspace'
+      path: '/workspace'
+      fullPath: '/workspace'
+      preLoaderRoute: typeof AppWorkspaceRouteImport
       parentRoute: typeof AppRoute
     }
     '/api/download': {
@@ -292,6 +427,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/invite/$id': {
+      id: '/invite/$id'
+      path: '/invite/$id'
+      fullPath: '/invite/$id'
+      preLoaderRoute: typeof InviteIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -299,28 +441,50 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/logo/': {
+      id: '/api/logo/'
+      path: '/api/logo'
+      fullPath: '/api/logo/'
+      preLoaderRoute: typeof ApiLogoIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/logo/$id': {
+      id: '/api/logo/$id'
+      path: '/api/logo/$id'
+      fullPath: '/api/logo/$id'
+      preLoaderRoute: typeof ApiLogoIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppAccountRoute: typeof AppAccountRoute
   AppAuditRoute: typeof AppAuditRoute
   AppDestinationsRoute: typeof AppDestinationsRoute
   AppInstancesRoute: typeof AppInstancesRoute
   AppJobsRoute: typeof AppJobsRoute
+  AppMembersRoute: typeof AppMembersRoute
   AppNotificationsRoute: typeof AppNotificationsRoute
+  AppPlatformRoute: typeof AppPlatformRoute
   AppRunsRoute: typeof AppRunsRoute
-  AppSettingsRoute: typeof AppSettingsRoute
+  AppTrashRoute: typeof AppTrashRoute
+  AppWorkspaceRoute: typeof AppWorkspaceRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAccountRoute: AppAccountRoute,
   AppAuditRoute: AppAuditRoute,
   AppDestinationsRoute: AppDestinationsRoute,
   AppInstancesRoute: AppInstancesRoute,
   AppJobsRoute: AppJobsRoute,
+  AppMembersRoute: AppMembersRoute,
   AppNotificationsRoute: AppNotificationsRoute,
+  AppPlatformRoute: AppPlatformRoute,
   AppRunsRoute: AppRunsRoute,
-  AppSettingsRoute: AppSettingsRoute,
+  AppTrashRoute: AppTrashRoute,
+  AppWorkspaceRoute: AppWorkspaceRoute,
   AppIndexRoute: AppIndexRoute,
 }
 
@@ -329,10 +493,14 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  NoWorkspaceRoute: NoWorkspaceRoute,
   SecurityRoute: SecurityRoute,
   ApiDownloadRoute: ApiDownloadRoute,
   ApiHealthRoute: ApiHealthRoute,
+  InviteIdRoute: InviteIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiLogoIdRoute: ApiLogoIdRoute,
+  ApiLogoIndexRoute: ApiLogoIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

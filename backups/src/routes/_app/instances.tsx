@@ -15,6 +15,7 @@ import { Input } from '~/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { timeAgo } from '~/lib/format'
 import { useAction, usePolling } from '~/lib/use-action'
+import { useWorkspace } from '~/lib/use-workspace'
 import { addInstance, deleteInstance, getInstances, testInstance, updateInstance } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/instances')({
@@ -30,6 +31,7 @@ function Instances() {
   const test = useServerFn(testInstance)
   const del = useServerFn(deleteInstance)
   const { run } = useAction()
+  const { can: allowed } = useWorkspace()
   usePolling(instances.some((i) => i.busy || i.restoring))
 
   return (
@@ -37,7 +39,7 @@ function Instances() {
       <PageHeader
         title="Instances"
         description="Self-hosted Convex deployments this console backs up and restores."
-        actions={<Button onClick={() => setEditing('new')}><Plus /> Add instance</Button>}
+        actions={allowed('manage') && <Button onClick={() => setEditing('new')}><Plus /> Add instance</Button>}
       />
       <PageBody>
         {instances.length === 0 ? (
@@ -47,7 +49,7 @@ function Instances() {
               <EmptyTitle>No instances yet</EmptyTitle>
               <EmptyDescription>Connect a Convex deployment with its API URL and an admin key.</EmptyDescription>
             </EmptyHeader>
-            <EmptyContent><Button onClick={() => setEditing('new')}><Plus /> Add instance</Button></EmptyContent>
+            {allowed('manage') && <EmptyContent><Button onClick={() => setEditing('new')}><Plus /> Add instance</Button></EmptyContent>}
           </Empty>
         ) : (
           <Card className="py-0">
@@ -75,6 +77,7 @@ function Instances() {
                       <TableCell>{timeAgo(i.last_ok_at)}</TableCell>
                       <TableCell>{n}</TableCell>
                       <TableCell>
+                        {allowed('run') && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon" aria-label="Actions"><MoreHorizontal /></Button>
@@ -83,16 +86,22 @@ function Instances() {
                             <DropdownMenuItem onClick={() => run(() => test({ data: { id: i.id } }), { success: (r) => `${i.name} is reachable (Convex ${r.version})` })}>
                               <PlugZap /> Test connection
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => setEditing(i)}><Pencil /> Edit</DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <Confirm
-                              trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Delete</DropdownMenuItem>}
-                              title={`Delete ${i.name}?`}
-                              description={`This removes the instance and its ${n} job${n === 1 ? '' : 's'}. Stored backups are kept in their destinations.`}
-                              onConfirm={() => run(() => del({ data: { id: i.id } }), { success: `${i.name} deleted` })}
-                            />
+                            {allowed('manage') && (
+                              <>
+                                <DropdownMenuItem onClick={() => setEditing(i)}><Pencil /> Edit</DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <Confirm
+                                  trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Move to trash</DropdownMenuItem>}
+                                  title={`Delete ${i.name}?`}
+                                  description={`The instance and its ${n} job${n === 1 ? '' : 's'} move to the Trash and can be restored until the workspace's grace period ends.`}
+                                  action="Move to trash"
+                                  onConfirm={() => run(() => del({ data: { id: i.id } }), { success: `${i.name} moved to trash` })}
+                                />
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        )}
                       </TableCell>
                     </TableRow>
                   )

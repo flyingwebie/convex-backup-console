@@ -12,16 +12,19 @@ import { authClient } from '~/lib/auth-client'
 import { getUser } from '~/server/fns'
 
 export const Route = createFileRoute('/login')({
-  validateSearch: z.object({ step: z.enum(['password', 'totp']).default('password') }),
+  validateSearch: z.object({ step: z.enum(['password', 'totp']).default('password'), next: z.string().optional() }),
   beforeLoad: async ({ search }) => {
     const user = await getUser()
-    if (user && search.step === 'password') throw redirect({ to: '/' })
+    if (user && search.step === 'password') throw redirect({ href: safeNext(search.next) })
   },
   component: Login,
 })
 
+// Only same-origin paths, so ?next= can't redirect off-site.
+const safeNext = (next?: string) => (next && next.startsWith('/') && !next.startsWith('//') ? next : '/')
+
 function Login() {
-  const { step } = Route.useSearch()
+  const { step, next } = Route.useSearch()
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -32,7 +35,7 @@ function Login() {
     setBusy(false)
     if (res.error) return setError(res.error.message ?? 'Sign-in failed')
     const twoFactor = res.data && typeof res.data === 'object' && 'twoFactorRedirect' in res.data
-    if (step === 'totp' || !twoFactor) await navigate({ to: '/' })
+    if (step === 'totp' || !twoFactor) window.location.href = safeNext(next)
   }
 
   async function submitPassword(e: React.FormEvent<HTMLFormElement>) {

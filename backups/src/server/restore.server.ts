@@ -17,6 +17,7 @@ export function isRestoring(instanceId: string) {
 }
 
 export type RestoreRequest = {
+  workspaceId: string
   runId: string
   destinationId: string
   targetInstanceId: string
@@ -28,10 +29,15 @@ export type RestoreRequest = {
 /** Validates the request, then restores in the background. Returns the restore id. */
 export function startRestore(req: RestoreRequest): string {
   const copy = db()
-    .prepare("SELECT object_key FROM run_copies WHERE run_id = ? AND destination_id = ? AND status = 'ok' AND deleted_at IS NULL")
-    .get(req.runId, req.destinationId) as { object_key: string } | undefined
+    .prepare(
+      `SELECT c.object_key FROM run_copies c JOIN runs r ON r.id = c.run_id
+       WHERE c.run_id = ? AND c.destination_id = ? AND c.status = 'ok' AND c.deleted_at IS NULL AND r.workspace_id = ?`,
+    )
+    .get(req.runId, req.destinationId, req.workspaceId) as { object_key: string } | undefined
   if (!copy) throw new Error('Backup copy not found (it may have been pruned)')
-  const target = db().prepare('SELECT * FROM instances WHERE id = ?').get(req.targetInstanceId) as
+  const target = db()
+    .prepare('SELECT * FROM instances WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL')
+    .get(req.targetInstanceId, req.workspaceId) as
     | { id: string; name: string; url: string; admin_key_enc: string }
     | undefined
   if (!target) throw new Error('Target instance not found')
@@ -42,11 +48,11 @@ export function startRestore(req: RestoreRequest): string {
   const id = randomUUID()
   db()
     .prepare(
-      `INSERT INTO restores (id, run_id, destination_id, object_key, target_instance_id, target_name, mode, actor, status, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
+      `INSERT INTO restores (id, workspace_id, run_id, destination_id, object_key, target_instance_id, target_name, mode, actor, status, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
     )
-    .run(id, req.runId, req.destinationId, copy.object_key, target.id, target.name, req.mode, req.actor, Date.now())
-  audit(req.actor, 'restore.started', { id, ...req, confirm: undefined, key: copy.object_key, target: target.name })
+    .run(id, req.workspaceId, req.runId, req.destinationId, copy.object_key, target.id, target.name, req.mode, req.actor, Date.now())
+  audit(req.workspaceId, req.actor, 'restore.started', { id, ...req, confirm: undefined, key: copy.object_key, target: target.name })
   restoring.add(target.id)
 
   void (async () => {
@@ -56,19 +62,19 @@ export function startRestore(req: RestoreRequest): string {
     try {
       const destRow = db().prepare('SELECT * FROM destinations WHERE id = ?').get(req.destinationId) as DestinationRow
       const source = await openDestination(destRow).get(copy.object_key)
-      await pipeline(copy.object_key.endsWith('.age') ? await decryptStream(source) : source, fs.createWriteStream(tmpFile))
+      await pipeline(copy.object_key.endsWith('.age') ? await decryptStream(req.workspaceId, source) : source, fs.createWriteStream(tmpFile))
       const convex = new ConvexAdmin(target.url, decrypt(target.admin_key_enc))
       const rows = await convex.importZip(tmpFile, req.mode, (message) => {
         db().prepare('UPDATE restores SET confirm_message = ? WHERE id = ?').run(message, id)
       })
       db().prepare("UPDATE restores SET status = 'ok', rows_written = ?, finished_at = ? WHERE id = ?").run(rows, Date.now(), id)
-      audit('system', 'restore.completed', { id, rows })
-      await notify({ type: 'restore', status: 'ok', title: `Restore completed into ${target.name}`, details: [`Backup: ${copy.object_key}`, `Mode: ${req.mode}`, `Documents: ${rows}`, `By: ${req.actor}`] })
+      audit(req.workspaceId, 'system', 'restore.completed', { id, rows })
+      await notify(req.workspaceId, { type: 'restore', status: 'ok', title: `Restore completed into ${target.name}`, details: [`Backup: ${copy.object_key}`, `Mode: ${req.mode}`, `Documents: ${rows}`, `By: ${req.actor}`] })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       db().prepare("UPDATE restores SET status = 'failed', error = ?, finished_at = ? WHERE id = ?").run(message, Date.now(), id)
-      audit('system', 'restore.failed', { id, error: message })
-      await notify({ type: 'restore', status: 'failed', title: `Restore into ${target.name} failed`, details: [`Backup: ${copy.object_key}`, message] })
+      audit(req.workspaceId, 'system', 'restore.failed', { id, error: message })
+      await notify(req.workspaceId, { type: 'restore', status: 'failed', title: `Restore into ${target.name} failed`, details: [`Backup: ${copy.object_key}`, message] })
     } finally {
       restoring.delete(target.id)
       await fs.promises.rm(tmpFile, { force: true })

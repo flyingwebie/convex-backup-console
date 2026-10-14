@@ -1,7 +1,15 @@
 # Convex Backup Console
 
 One shared console that backs up and restores **many** self-hosted Convex instances (each deployed
-from this repo's root `docker-compose.yaml`). Design notes: [PLAN.md](PLAN.md).
+from this repo's root `docker-compose.yaml`), organised in **workspaces**. Design notes: [PLAN.md](PLAN.md).
+
+- **Workspaces:** e.g. one per client. Each has its own instances, destinations, jobs, alerts,
+  encryption key, members, logo, name, timezone, job defaults, backup-health threshold and deletion
+  policy. Switch between them in the sidebar.
+- **Members & roles:** invite by link (and email when SMTP is set). Roles: Owner, Admin, Operator
+  (run and download, no restore), Viewer (read-only). Platform admins create workspaces and manage users.
+- **Deletion policy & Trash:** deleted workspaces, instances, jobs and destinations stay restorable for
+  N days (default 7), then are purged. Per workspace: keep their backup files (default) or delete them too.
 
 - **Backups:** manual or cron, to S3-compatible storage (Cloudflare R2, AWS S3, Backblaze B2, MinIO)
   and/or a local volume, with file storage included. Exports are removed from the source instance
@@ -21,8 +29,11 @@ from this repo's root `docker-compose.yaml`). Design notes: [PLAN.md](PLAN.md).
 2. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` (12+ characters). Coolify generates the domain and the secrets.
 3. **Copy `SERVICE_PASSWORD_64_MASTERKEY` into your password manager.** It encrypts the stored admin
    keys, S3 secrets and the age key; without it they can't be decrypted.
-4. Deploy, open the domain, sign in, enrol 2FA (mandatory), then in **Settings** create the encryption
-   key and save the private key in your password manager.
+4. Deploy, open the domain, sign in and enrol 2FA (mandatory). You're a platform admin and owner of a
+   "Default" workspace: rename it, add a logo and timezone in **Workspace → Settings**, create its
+   encryption key and save the private key in your password manager.
+5. Optional: **Platform → Email (SMTP)** so invitations are emailed. Create more workspaces from the
+   workspace switcher.
 
 The image is published by `.github/workflows/backup-console.yml` to `ghcr.io/flyingwebie/convex-backup-console`.
 Pin a version with `CONSOLE_VERSION=sha-xxxxxxx`. If the package is private, add GHCR credentials to Coolify.
@@ -40,7 +51,7 @@ internet except through Cloudflare's login**, deploy `/backups/docker-compose.tu
 
 1. Deploy the root `docker-compose.yaml` for the project (`CONVEX_VERSION` defaults to `latest`).
 2. In Coolify, open the instance's `backend` terminal and run `./generate_admin_key.sh`.
-3. Console → **Instances → Add instance**: the instance's public API URL (`SERVICE_URL_BACKEND`) and the admin key.
+3. Console → pick the client's workspace → **Instances → Add instance**: the instance's public API URL (`SERVICE_URL_BACKEND`) and the admin key.
 4. **Jobs → New job**: pick destinations, a schedule and retention.
 
 ## Development

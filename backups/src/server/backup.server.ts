@@ -15,6 +15,7 @@ import { openDestination, type DestinationRow } from './storage.server'
 
 type JobRow = {
   id: string
+  workspace_id: string
   name: string
   instance_id: string
   include_storage: number
@@ -35,20 +36,20 @@ export function isInstanceBusy(instanceId: string) {
 
 /** Starts a job in the background and returns the run id immediately. */
 export function startJob(jobId: string, trigger: string): string {
-  const job = db().prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as JobRow | undefined
+  const job = db().prepare('SELECT * FROM jobs WHERE id = ? AND deleted_at IS NULL').get(jobId) as JobRow | undefined
   if (!job) throw new Error('Job not found')
   if (running.has(job.instance_id)) throw new Error('A backup for this instance is already running')
   const runId = randomUUID()
   db()
-    .prepare('INSERT INTO runs (id, job_id, instance_id, trigger, status, started_at, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(runId, job.id, job.instance_id, trigger, 'running', Date.now(), job.encrypt)
+    .prepare('INSERT INTO runs (id, workspace_id, job_id, instance_id, trigger, status, started_at, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(runId, job.workspace_id, job.id, job.instance_id, trigger, 'running', Date.now(), job.encrypt)
   running.add(job.instance_id)
   void runJob(runId, job)
     .catch(async (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err)
       db().prepare('UPDATE runs SET status = ?, error = ?, finished_at = ? WHERE id = ?').run('failed', message, Date.now(), runId)
-      audit('system', 'backup.failed', { runId, jobId: job.id, error: message })
-      await notify({ type: 'backup', status: 'failed', title: `Backup failed: ${job.name}`, details: [message] })
+      audit(job.workspace_id, 'system', 'backup.failed', { runId, jobId: job.id, error: message })
+      await notify(job.workspace_id, { type: 'backup', status: 'failed', title: `Backup failed: ${job.name}`, details: [message] })
     })
     .finally(() => running.delete(job.instance_id))
   return runId
@@ -57,7 +58,7 @@ export function startJob(jobId: string, trigger: string): string {
 async function runJob(runId: string, job: JobRow) {
   const instance = db().prepare('SELECT * FROM instances WHERE id = ?').get(job.instance_id) as InstanceRow
   const destinations = db()
-    .prepare('SELECT d.* FROM destinations d JOIN job_destinations jd ON jd.destination_id = d.id WHERE jd.job_id = ?')
+    .prepare('SELECT d.* FROM destinations d JOIN job_destinations jd ON jd.destination_id = d.id WHERE jd.job_id = ? AND d.deleted_at IS NULL')
     .all(job.id) as DestinationRow[]
   if (destinations.length === 0) throw new Error('Job has no destinations')
 
@@ -72,7 +73,7 @@ async function runJob(runId: string, job: JobRow) {
     const res = await convex.downloadExport(snapshot.start_ts)
     if (!res.body) throw new Error('Export download returned no body')
     await pipeline(Readable.fromWeb(res.body as WebReadableStream), fs.createWriteStream(zipFile))
-    if (job.encrypt) await encryptFile(zipFile, uploadFile)
+    if (job.encrypt) await encryptFile(job.workspace_id, zipFile, uploadFile)
     const { size } = await fs.promises.stat(uploadFile)
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -92,14 +93,14 @@ async function runJob(runId: string, job: JobRow) {
 
     // Only clean up the source once we hold at least one copy.
     await convex.expireExport(snapshot._id).catch((err: unknown) => {
-      audit('system', 'export.expire_failed', { runId, error: String(err) })
+      audit(job.workspace_id, 'system', 'export.expire_failed', { runId, error: String(err) })
     })
 
     const status = failures.length ? 'partial' : 'ok'
     db().prepare('UPDATE runs SET status = ?, bytes = ?, finished_at = ? WHERE id = ?').run(status, size, Date.now(), runId)
-    audit('system', 'backup.completed', { runId, jobId: job.id, status, bytes: size })
+    audit(job.workspace_id, 'system', 'backup.completed', { runId, jobId: job.id, status, bytes: size })
     await applyRetention(job)
-    await notify({
+    await notify(job.workspace_id, {
       type: 'backup',
       status,
       title: `${status === 'ok' ? 'Backup completed' : 'Backup partially failed'}: ${job.name}`,
@@ -142,7 +143,7 @@ async function applyRetention(job: JobRow) {
         await dest.delete(copy.object_key)
         db().prepare('UPDATE run_copies SET deleted_at = ? WHERE run_id = ? AND destination_id = ?').run(Date.now(), copy.run_id, destinationId)
       } catch (err) {
-        audit('system', 'retention.delete_failed', { ...copy, error: String(err) })
+        audit(job.workspace_id, 'system', 'retention.delete_failed', { ...copy, error: String(err) })
       }
     }
   }
