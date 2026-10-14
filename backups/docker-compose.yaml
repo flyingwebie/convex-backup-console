@@ -1,0 +1,54 @@
+# documentation: https://github.com/flyingwebie/convex-selfhost-coolify/tree/main/backups
+# slogan: Shared backup & restore console for self-hosted Convex instances.
+# tags: convex, backups, s3, r2
+#
+# Deploy ONCE in Coolify (Docker Compose Location: /backups/docker-compose.yaml).
+# Do NOT give the `app` service a domain: it is reachable only through the
+# Cloudflare Tunnel below, protected by Cloudflare Access. See backups/README.md.
+#
+# Coolify magic variables (auto-generated on first deploy):
+#   SERVICE_PASSWORD_64_MASTERKEY  -> encrypts stored admin keys / S3 secrets. BACK IT UP.
+#   SERVICE_PASSWORD_64_AUTHSECRET -> signs login sessions
+# Set manually in Coolify:
+#   PUBLIC_URL      e.g. https://backups.example.com
+#   ADMIN_EMAIL / ADMIN_PASSWORD   first admin (only used while no user exists)
+#   TUNNEL_TOKEN    from Cloudflare Zero Trust -> Networks -> Tunnels
+
+services:
+  app:
+    image: ghcr.io/flyingwebie/convex-backup-console:${CONSOLE_VERSION:-latest}
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m
+    environment:
+      - BACKUP_MASTER_KEY=${SERVICE_PASSWORD_64_MASTERKEY}
+      - BETTER_AUTH_SECRET=${SERVICE_PASSWORD_64_AUTHSECRET}
+      - PUBLIC_URL=${PUBLIC_URL}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+    volumes:
+      # SQLite state, temp export files and any "local" destination (use /data/backups).
+      - console-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.3
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  console-data:
