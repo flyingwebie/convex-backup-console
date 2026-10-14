@@ -67,6 +67,22 @@ CREATE TABLE IF NOT EXISTS run_copies (
   deleted_at INTEGER,
   PRIMARY KEY (run_id, destination_id)
 );
+CREATE TABLE IF NOT EXISTS restores (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  object_key TEXT NOT NULL,
+  target_instance_id TEXT REFERENCES instances(id) ON DELETE SET NULL,
+  target_name TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  status TEXT NOT NULL,
+  confirm_message TEXT,
+  rows_written INTEGER,
+  error TEXT,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   at INTEGER NOT NULL,

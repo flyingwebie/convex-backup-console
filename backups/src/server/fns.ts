@@ -8,6 +8,7 @@ import { ensureBooted } from './boot.server'
 import { ConvexAdmin } from './convex.server'
 import { decrypt, encrypt } from './crypto.server'
 import { audit, db } from './db.server'
+import { isRestoring, startRestore } from './restore.server'
 import { nextRun, syncSchedules } from './scheduler.server'
 import { openDestination, type DestinationRow } from './storage.server'
 
@@ -45,7 +46,7 @@ export const getDashboard = createServerFn({ method: 'GET' })
         url: string
         created_at: number
       }[]
-    ).map((i) => ({ ...i, busy: isInstanceBusy(i.id) }))
+    ).map((i) => ({ ...i, busy: isInstanceBusy(i.id), restoring: isRestoring(i.id) }))
     const destinations = (db().prepare('SELECT id, name, kind, config FROM destinations ORDER BY name').all() as DestinationRow[]).map(
       (d) => ({ id: d.id, name: d.name, kind: d.kind, summary: summarize(d) }),
     )
@@ -79,10 +80,29 @@ export const getDashboard = createServerFn({ method: 'GET' })
          ORDER BY r.started_at DESC LIMIT 30`,
       )
       .all() as Record<string, unknown>[]
+    const restores = db()
+      .prepare(
+        `SELECT id, object_key, target_name, mode, actor, status, confirm_message, rows_written, error, started_at, finished_at
+         FROM restores ORDER BY started_at DESC LIMIT 10`,
+      )
+      .all() as {
+      id: string
+      object_key: string
+      target_name: string
+      mode: string
+      actor: string
+      status: string
+      confirm_message: string | null
+      rows_written: number | null
+      error: string | null
+      started_at: number
+      finished_at: number | null
+    }[]
     return {
       instances,
       destinations,
       jobs,
+      restores,
       runs: runs.map((r) => ({
         id: String(r.id),
         job_name: (r.job_name as string | null) ?? '(deleted job)',
@@ -140,6 +160,16 @@ export const testInstance = createServerFn({ method: 'POST' })
       | undefined
     if (!row) throw new Error('Instance not found')
     return { version: await probe(row.url, decrypt(row.admin_key_enc)) }
+  })
+
+export const updateInstance = createServerFn({ method: 'POST' })
+  .middleware([requireUser])
+  .validator(parse(z.object({ id: z.string(), url: instanceInput.shape.url, adminKey: instanceInput.shape.adminKey })))
+  .handler(async ({ data, context }) => {
+    const version = await probe(data.url, data.adminKey)
+    db().prepare('UPDATE instances SET url = ?, admin_key_enc = ? WHERE id = ?').run(data.url, encrypt(data.adminKey), data.id)
+    audit(context.user.email, 'instance.updated', { id: data.id, url: data.url })
+    return { version }
   })
 
 export const deleteInstance = createServerFn({ method: 'POST' })
@@ -280,3 +310,20 @@ export const runJobNow = createServerFn({ method: 'POST' })
     audit(context.user.email, 'backup.started', { jobId: data.id, runId })
     return { runId }
   })
+
+// ── Restore ──────────────────────────────────────────────────
+
+export const restoreBackup = createServerFn({ method: 'POST' })
+  .middleware([requireUser])
+  .validator(
+    parse(
+      z.object({
+        runId: z.string(),
+        destinationId: z.string(),
+        targetInstanceId: z.string(),
+        mode: z.enum(['replaceAll', 'replace', 'append', 'requireEmpty']),
+        confirm: z.string(),
+      }),
+    ),
+  )
+  .handler(async ({ data, context }) => ({ restoreId: startRestore({ ...data, actor: context.user.email }) }))

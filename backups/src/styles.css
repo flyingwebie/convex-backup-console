@@ -21,3 +21,4 @@ button:disabled { opacity: .5; cursor: default; }
 .card form { display: grid; gap: 10px; }
 .row { display: flex; gap: 6px; flex-wrap: wrap; }
 code { font-size: 12px; background: #f0f1f3; padding: 1px 4px; border-radius: 4px; word-break: break-all; }
+form.restore { border-top: 1px solid #eef0f2; padding-top: 12px; }

@@ -11,10 +11,12 @@ import {
   deleteJob,
   getDashboard,
   getUser,
+  restoreBackup,
   runJobNow,
   setJobEnabled,
   testDestination,
   testInstance,
+  updateInstance,
 } from '~/server/fns'
 
 export const Route = createFileRoute('/')({
@@ -54,7 +56,7 @@ function Dashboard() {
   const data = Route.useLoaderData()
   const { user } = Route.useRouteContext()
   const router = useRouter()
-  const anyRunning = data.runs.some((r) => r.status === 'running')
+  const anyRunning = data.runs.some((r) => r.status === 'running') || data.restores.some((r) => r.status === 'running')
 
   useEffect(() => {
     if (!anyRunning) return
@@ -75,6 +77,7 @@ function Dashboard() {
       <Destinations data={data} />
       <Jobs data={data} />
       <Runs data={data} />
+      <Restores data={data} />
     </main>
   )
 }
@@ -83,8 +86,10 @@ function Instances({ data }: { data: Data }) {
   const add = useServerFn(addInstance)
   const test = useServerFn(testInstance)
   const del = useServerFn(deleteInstance)
+  const update = useServerFn(updateInstance)
   const { run, error, busy } = useAction()
   const [status, setStatus] = useState<string | null>(null)
+  const [editing, setEditing] = useState<string | null>(null)
 
   return (
     <section>
@@ -94,16 +99,36 @@ function Instances({ data }: { data: Data }) {
         <tbody>
           {data.instances.map((i) => (
             <tr key={i.id}>
-              <td>{i.name} {i.busy && <span className="running">· exporting</span>}</td>
+              <td>{i.name} {i.busy && <span className="running">· exporting</span>}{i.restoring && <span className="running">· restoring</span>}</td>
               <td><code>{i.url}</code></td>
               <td className="row">
                 <button disabled={busy} onClick={() => run(async () => setStatus(`${i.name}: Convex ${(await test({ data: { id: i.id } })).version}`))}>Test</button>
+                <button disabled={busy} onClick={() => setEditing(editing === i.id ? null : i.id)}>Update key</button>
                 <button className="danger" disabled={busy} onClick={() => confirm(`Delete ${i.name} and its jobs?`) && run(() => del({ data: { id: i.id } }))}>Delete</button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {editing && (
+        <form
+          className="inline"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const f = new FormData(e.currentTarget)
+            void run(async () => {
+              const r = await update({ data: { id: editing, url: String(f.get('url')), adminKey: String(f.get('adminKey')) } })
+              setStatus(`Updated — Convex ${r.version}`)
+              setEditing(null)
+            })
+          }}
+        >
+          <strong>Update {data.instances.find((i) => i.id === editing)?.name}</strong>
+          <input name="url" defaultValue={data.instances.find((i) => i.id === editing)?.url} required size={32} />
+          <input name="adminKey" type="password" placeholder="New admin key" required />
+          <button className="primary" disabled={busy}>Save</button>
+        </form>
+      )}
       <form
         className="inline"
         onSubmit={(e) => {
@@ -285,6 +310,7 @@ function Jobs({ data }: { data: Data }) {
 
 function Runs({ data }: { data: Data }) {
   const destName = (id: string) => data.destinations.find((d) => d.id === id)?.name ?? '(deleted)'
+  const [restoring, setRestoring] = useState<{ runId: string; destinationId: string; label: string } | null>(null)
   return (
     <section>
       <h2>Recent runs</h2>
@@ -302,12 +328,91 @@ function Runs({ data }: { data: Data }) {
               <td>{r.bytes != null ? formatBytes(r.bytes) : ''}</td>
               <td>
                 {r.copies.map((c) => (
-                  <div key={c.destination_id}>
+                  <div key={c.destination_id} className="row">
                     <span className={c.status}>{destName(c.destination_id)}</span>
-                    {c.deleted ? <span className="muted"> · pruned</span> : null}
+                    {c.deleted ? <span className="muted">· pruned</span> : null}
+                    {c.status === 'ok' && !c.deleted && (
+                      <>
+                        <a href={`/api/download?run=${r.id}&dest=${c.destination_id}`}>Download</a>
+                        <button onClick={() => setRestoring({ runId: r.id, destinationId: c.destination_id, label: `${r.instance_name} · ${new Date(r.started_at).toLocaleString()} · ${destName(c.destination_id)}` })}>
+                          Restore…
+                        </button>
+                      </>
+                    )}
                     {c.error && <div className="error">{c.error}</div>}
                   </div>
                 ))}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {restoring && <RestoreForm data={data} source={restoring} onClose={() => setRestoring(null)} />}
+    </section>
+  )
+}
+
+function RestoreForm({ data, source, onClose }: { data: Data; source: { runId: string; destinationId: string; label: string }; onClose: () => void }) {
+  const restore = useServerFn(restoreBackup)
+  const { run, error, busy } = useAction()
+  const [targetId, setTargetId] = useState(data.instances[0]?.id ?? '')
+  const target = data.instances.find((i) => i.id === targetId)
+  return (
+    <form
+      className="inline restore"
+      onSubmit={(e) => {
+        e.preventDefault()
+        const f = new FormData(e.currentTarget)
+        void run(async () => {
+          await restore({
+            data: {
+              ...source,
+              targetInstanceId: targetId,
+              mode: String(f.get('mode')) as 'replaceAll',
+              confirm: String(f.get('confirm')),
+            },
+          })
+          onClose()
+        })
+      }}
+    >
+      <strong>Restore {source.label}</strong>
+      <span>into</span>
+      <select value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+        {data.instances.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+      </select>
+      <select name="mode" defaultValue="replaceAll">
+        <option value="replaceAll">Replace all tables (full restore)</option>
+        <option value="replace">Replace tables in the backup only</option>
+        <option value="append">Append documents</option>
+        <option value="requireEmpty">Only if target is empty</option>
+      </select>
+      <input name="confirm" placeholder={`Type "${target?.name ?? ''}" to confirm`} required autoComplete="off" />
+      <button className="danger" disabled={busy || !target}>Restore — overwrites data</button>
+      <button type="button" onClick={onClose}>Cancel</button>
+      {error && <p className="error">{error}</p>}
+    </form>
+  )
+}
+
+function Restores({ data }: { data: Data }) {
+  if (data.restores.length === 0) return null
+  return (
+    <section>
+      <h2>Restores</h2>
+      <table>
+        <thead><tr><th>Started</th><th>Backup</th><th>Into</th><th>Mode</th><th>Status</th></tr></thead>
+        <tbody>
+          {data.restores.map((r) => (
+            <tr key={r.id}>
+              <td>{new Date(r.started_at).toLocaleString()}<div className="muted">{r.actor}</div></td>
+              <td><code>{r.object_key}</code></td>
+              <td>{r.target_name}</td>
+              <td>{r.mode}</td>
+              <td className={r.status}>
+                {r.status}{r.rows_written != null && ` · ${r.rows_written} docs`}
+                {r.confirm_message && <div className="muted">{r.confirm_message}</div>}
+                {r.error && <div className="error">{r.error}</div>}
               </td>
             </tr>
           ))}

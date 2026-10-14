@@ -1,7 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import { DeleteObjectCommand, HeadBucketCommand, S3Client } from '@aws-sdk/client-s3'
+import { Readable } from 'node:stream'
+import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, S3Client } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 import { decrypt } from './crypto.server'
 
@@ -27,6 +28,7 @@ export interface Destination {
   test(): Promise<void>
   put(key: string, file: string): Promise<void>
   delete(key: string): Promise<void>
+  get(key: string): Promise<Readable>
 }
 
 export function openDestination(row: DestinationRow): Destination {
@@ -62,6 +64,11 @@ class S3Destination implements Destination {
     })
     await upload.done()
   }
+  async get(key: string) {
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.cfg.bucket, Key: this.fullKey(key) }))
+    if (!res.Body) throw new Error('Empty object body')
+    return res.Body as Readable
+  }
   async delete(key: string) {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.cfg.bucket, Key: this.fullKey(key) }))
   }
@@ -85,7 +92,16 @@ class LocalDestination implements Destination {
     await pipeline(fs.createReadStream(file), fs.createWriteStream(target + '.partial'))
     await fs.promises.rename(target + '.partial', target)
   }
+  async get(key: string) {
+    const file = this.resolve(key)
+    await fs.promises.access(file)
+    return fs.createReadStream(file)
+  }
   async delete(key: string) {
     await fs.promises.rm(this.resolve(key), { force: true })
   }
+}
+
+export async function downloadTo(dest: Destination, key: string, file: string) {
+  await pipeline(await dest.get(key), fs.createWriteStream(file))
 }

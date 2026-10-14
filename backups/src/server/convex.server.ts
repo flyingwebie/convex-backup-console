@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 // Minimal client for the Convex backend's admin HTTP API (the same endpoints `npx convex export` uses).
 
 export type ExportState =
@@ -14,6 +15,8 @@ export class ConvexAdmin {
     const res = await fetch(new URL(path, this.url), {
       ...init,
       headers: { Authorization: `Convex ${this.adminKey}`, ...init.headers },
+    }).catch((err: unknown) => {
+      throw new Error(`Cannot reach ${this.url}: ${describeNetworkError(err)}`)
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
@@ -23,7 +26,9 @@ export class ConvexAdmin {
   }
 
   async version(): Promise<string> {
-    const res = await fetch(new URL('/version', this.url))
+    const res = await fetch(new URL('/version', this.url)).catch((err: unknown) => {
+      throw new Error(`Cannot reach ${this.url}: ${describeNetworkError(err)}`)
+    })
     if (!res.ok) throw new Error(`GET /version → ${res.status}`)
     return (await res.text()).trim()
   }
@@ -87,7 +92,64 @@ export class ConvexAdmin {
       body: `{"expirationTsNs":${ns}}`,
     })
   }
+
+  /** Uploads a snapshot zip and runs the import; resolves with rows written. */
+  async importZip(file: string, mode: ImportMode, onConfirm: (message: string) => void): Promise<number> {
+    const { size } = await fs.promises.stat(file)
+    // The backend rejects 10k+ parts; the CLI uses 5 MiB parts.
+    const chunkSize = Math.max(8 * 1024 * 1024, Math.ceil(size / 9999))
+    const { uploadToken } = (await (await this.fetch('/api/import/start_upload', { method: 'POST' })).json()) as {
+      uploadToken: string
+    }
+    const partTokens: unknown[] = []
+    let partNumber = 1
+    for await (const chunk of fs.createReadStream(file, { highWaterMark: chunkSize })) {
+      const res = await this.fetch(
+        `/api/import/upload_part?uploadToken=${encodeURIComponent(uploadToken)}&partNumber=${partNumber++}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(chunk as Buffer) },
+      )
+      partTokens.push(await res.json())
+    }
+    const { importId } = (await (
+      await this.fetch('/api/import/finish_upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ import: { mode, format: 'zip' }, uploadToken, partTokens }),
+      })
+    ).json()) as { importId: string }
+
+    let confirmed = false
+    const deadline = Date.now() + 6 * 60 * 60 * 1000
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000))
+      const doc = (await this.query('_system/cli/queryImport', { importId })) as { state: ImportState } | null
+      const state = doc?.state
+      if (!state) continue
+      if (state.state === 'completed') return Number(toBigInt(state.num_rows_written))
+      if (state.state === 'failed') throw new Error(`Import failed: ${state.error_message}`)
+      if (state.state === 'waiting_for_confirmation' && !confirmed) {
+        // The operator already typed the target name in the console; record what Convex asked.
+        onConfirm(state.message_to_confirm ?? '')
+        await this.fetch('/api/perform_import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ importId }),
+        })
+        confirmed = true
+      }
+    }
+    throw new Error('Timed out waiting for the import to complete')
+  }
 }
+
+export type ImportMode = 'replaceAll' | 'replace' | 'append' | 'requireEmpty'
+
+export type ImportState =
+  | { state: 'uploaded' }
+  | { state: 'in_progress'; progress_message?: string }
+  | { state: 'waiting_for_confirmation'; message_to_confirm?: string; require_manual_confirmation?: boolean }
+  | { state: 'completed'; num_rows_written: number | bigint | Record<string, string> }
+  | { state: 'failed'; error_message: string }
 
 // Int64 values come back either as numbers or as Convex JSON `{ $integer: base64(le-int64) }`.
 function toBigInt(value: unknown): bigint {
@@ -97,4 +159,9 @@ function toBigInt(value: unknown): bigint {
     return Buffer.from(String((value as { $integer: string }).$integer), 'base64').readBigInt64LE(0)
   }
   throw new Error(`Unexpected int64 encoding: ${JSON.stringify(value)}`)
+}
+
+function describeNetworkError(err: unknown): string {
+  const cause = (err as { cause?: { code?: string; message?: string } })?.cause
+  return cause?.code ?? cause?.message ?? (err instanceof Error ? err.message : String(err))
 }

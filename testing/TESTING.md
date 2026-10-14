@@ -22,3 +22,20 @@ Run in a **separate Coolify project**. Never against a real project's instance.
 | 7 | Failure notification | Stop A, run job → alert arrives |
 | 8 | Exposure | Server IP + spoofed `Host` header → no response; Access blocks unlisted email |
 | 9 | Auth | Bad password throttled; TOTP required |
+
+## Local Docker run — 2026-10-14 (convex-backend `latest`, Postgres + RustFS template)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Manual backup A → R2 stand-in + local | ✅ 1.34 MB zip on both (500 docs, 20 files). Encryption not built yet |
+| 2 | Scheduled backup + keep-last-2 | ✅ cron `* * * * *` ran every minute; oldest copy pruned on both destinations |
+| 3 | Source export cleanup | ✅ after `MAX_EXPIRED_SNAPSHOT_AGE_DAYS=0` was added to the template, only the newest export stays in A's bucket |
+| 4 | Restore A → B (ReplaceAll) | ✅ 520 docs; fingerprint and all 20 file SHA-256 hashes match A |
+| 5 | DR: `down -v` on A, restore from local copy | ✅ identical fingerprint and file hashes |
+| 6 | Zip download | ✅ exact bytes, valid zip; 401 without a session |
+| 7 | Failure handling | ✅ R2 down → `partial` (local copy kept); A down → `failed: Cannot reach … ECONNREFUSED`. Notifications not built yet |
+| 8 | Exposure | ⏳ needs the real Cloudflare Tunnel |
+| 9 | Auth | ✅ 2FA required before any action; 6th bad login in a minute → 429; wrong restore confirmation rejected |
+
+Also checked: state and sessions survive a container redeploy; the container runs read-only as non-root;
+old admin keys stay valid after a wipe as long as `INSTANCE_SECRET` is unchanged.

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SecurityRouteImport } from './routes/security'
+import { Route as ApiDownloadRouteImport } from './routes/api/download'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
@@ -30,6 +31,11 @@ const SecurityRoute = SecurityRouteImport.update({
   path: '/security',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDownloadRoute = ApiDownloadRouteImport.update({
+  id: '/api/download',
+  path: '/api/download',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/security': typeof SecurityRoute
+  '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/security': typeof SecurityRoute
+  '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
@@ -60,21 +68,42 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/security': typeof SecurityRoute
+  '/api/download': typeof ApiDownloadRoute
   '/api/health': typeof ApiHealthRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/security' | '/api/health' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/security'
+    | '/api/download'
+    | '/api/health'
+    | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/security' | '/api/health' | '/api/auth/$'
-  id: '__root__' | '/' | '/login' | '/security' | '/api/health' | '/api/auth/$'
+  to:
+    | '/'
+    | '/login'
+    | '/security'
+    | '/api/download'
+    | '/api/health'
+    | '/api/auth/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/security'
+    | '/api/download'
+    | '/api/health'
+    | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
   SecurityRoute: typeof SecurityRoute
+  ApiDownloadRoute: typeof ApiDownloadRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
@@ -102,6 +131,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SecurityRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/download': {
+      id: '/api/download'
+      path: '/api/download'
+      fullPath: '/api/download'
+      preLoaderRoute: typeof ApiDownloadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/health': {
       id: '/api/health'
       path: '/api/health'
@@ -123,6 +159,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
   SecurityRoute: SecurityRoute,
+  ApiDownloadRoute: ApiDownloadRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }

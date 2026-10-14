@@ -4,9 +4,10 @@ One shared, password + 2FA protected console that backs up **many** self-hosted 
 instances (each deployed from this repo's root `docker-compose.yaml`) to S3-compatible storage
 (AWS S3, Cloudflare R2, B2, MinIO…) or a local volume. See [PLAN.md](PLAN.md) for the design.
 
-**Status: milestone 1.** Instances, destinations, jobs (manual and cron), keep-last-N retention,
-export cleanup on the source, run history, audit log, Better Auth login with required TOTP.
-Coming next: restore, zip download, age encryption, GFS retention, notifications.
+**Status:** instances, destinations, jobs (manual and cron), keep-last-N retention, export cleanup
+on the source, **restore** (same or another instance, typed confirmation), **zip download**, run and
+restore history, audit log, and Better Auth login with required TOTP. Tested end to end locally (see
+`testing/TESTING.md`). Still to build: age encryption, GFS retention, notifications.
 
 ## Deploy in Coolify (once)
 

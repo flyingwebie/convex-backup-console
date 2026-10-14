@@ -1,12 +1,12 @@
-import { betterAuth } from 'better-auth'
+import { betterAuth, type BetterAuthOptions } from 'better-auth'
 import { getMigrations } from 'better-auth/db/migration'
 import { twoFactor } from 'better-auth/plugins/two-factor'
 import { tanstackStartCookies } from 'better-auth/tanstack-start'
 import { db } from './db.server'
 import { env } from './env.server'
 
-function createAuth() {
-  return betterAuth({
+function authOptions() {
+  return {
     appName: 'Convex Backup Console',
     database: db(),
     secret: env.authSecret,
@@ -16,7 +16,7 @@ function createAuth() {
     session: { expiresIn: 60 * 60 * 24, updateAge: 60 * 60 },
     rateLimit: {
       enabled: true,
-      storage: 'database',
+      storage: 'database' as const,
       window: 60,
       max: 100,
       customRules: {
@@ -31,7 +31,11 @@ function createAuth() {
       ipAddress: { ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for'] },
     },
     plugins: [twoFactor({ issuer: 'Convex Backup Console' }), tanstackStartCookies()],
-  })
+  } satisfies BetterAuthOptions
+}
+
+function createAuth() {
+  return betterAuth(authOptions())
 }
 
 type Auth = ReturnType<typeof createAuth>
@@ -42,7 +46,8 @@ export function auth(): Auth {
 }
 
 export async function migrateAuth() {
-  const { runMigrations } = await getMigrations(auth().options)
+  // Uses the options directly so the auth instance isn't created (and schema-checked) before tables exist.
+  const { runMigrations } = await getMigrations(authOptions())
   await runMigrations()
 }
 

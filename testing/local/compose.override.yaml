@@ -1,0 +1,8 @@
+# Local-only override: publishes the Convex API so the console (on the host) can reach it,
+# and runs Convex's system-table cleanup every 30s so export purging is observable in tests.
+services:
+  backend:
+    ports:
+      - "${LOCAL_API_PORT}:3210"
+    environment:
+      - SYSTEM_TABLE_CLEANUP_FREQUENCY_SECONDS=30
