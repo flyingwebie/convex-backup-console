@@ -13,6 +13,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as NoWorkspaceRouteImport } from './routes/no-workspace'
 import { Route as SecurityRouteImport } from './routes/security'
+import { Route as VerifyRouteImport } from './routes/verify'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppAccountRouteImport } from './routes/_app/account'
 import { Route as AppAuditRouteImport } from './routes/_app/audit'
@@ -49,6 +50,11 @@ const NoWorkspaceRoute = NoWorkspaceRouteImport.update({
 const SecurityRoute = SecurityRouteImport.update({
   id: '/security',
   path: '/security',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VerifyRoute = VerifyRouteImport.update({
+  id: '/verify',
+  path: '/verify',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppIndexRoute = AppIndexRouteImport.update({
@@ -147,6 +153,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/no-workspace': typeof NoWorkspaceRoute
   '/security': typeof SecurityRoute
+  '/verify': typeof VerifyRoute
   '/account': typeof AppAccountRoute
   '/audit': typeof AppAuditRoute
   '/destinations': typeof AppDestinationsRoute
@@ -169,6 +176,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/no-workspace': typeof NoWorkspaceRoute
   '/security': typeof SecurityRoute
+  '/verify': typeof VerifyRoute
   '/account': typeof AppAccountRoute
   '/audit': typeof AppAuditRoute
   '/destinations': typeof AppDestinationsRoute
@@ -194,6 +202,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/no-workspace': typeof NoWorkspaceRoute
   '/security': typeof SecurityRoute
+  '/verify': typeof VerifyRoute
   '/_app/account': typeof AppAccountRoute
   '/_app/audit': typeof AppAuditRoute
   '/_app/destinations': typeof AppDestinationsRoute
@@ -220,6 +229,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/no-workspace'
     | '/security'
+    | '/verify'
     | '/account'
     | '/audit'
     | '/destinations'
@@ -242,6 +252,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/no-workspace'
     | '/security'
+    | '/verify'
     | '/account'
     | '/audit'
     | '/destinations'
@@ -266,6 +277,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/no-workspace'
     | '/security'
+    | '/verify'
     | '/_app/account'
     | '/_app/audit'
     | '/_app/destinations'
@@ -291,6 +303,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   NoWorkspaceRoute: typeof NoWorkspaceRoute
   SecurityRoute: typeof SecurityRoute
+  VerifyRoute: typeof VerifyRoute
   ApiDownloadRoute: typeof ApiDownloadRoute
   ApiHealthRoute: typeof ApiHealthRoute
   InviteIdRoute: typeof InviteIdRoute
@@ -327,6 +340,13 @@ declare module '@tanstack/react-router' {
       path: '/security'
       fullPath: '/security'
       preLoaderRoute: typeof SecurityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/verify': {
+      id: '/verify'
+      path: '/verify'
+      fullPath: '/verify'
+      preLoaderRoute: typeof VerifyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app/': {
@@ -495,6 +515,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   NoWorkspaceRoute: NoWorkspaceRoute,
   SecurityRoute: SecurityRoute,
+  VerifyRoute: VerifyRoute,
   ApiDownloadRoute: ApiDownloadRoute,
   ApiHealthRoute: ApiHealthRoute,
   InviteIdRoute: InviteIdRoute,

@@ -8,6 +8,7 @@ export const Route = createFileRoute('/_app')({
     const app = await getAppContext()
     if (!app) throw redirect({ to: '/login', search: { step: 'password', next: location.href } })
     if (!app.user.twoFactorEnabled) throw redirect({ to: '/security' })
+    if (!app.user.sessionFactor) throw redirect({ to: '/verify', search: { next: location.href } })
     if (!app.active && !location.pathname.startsWith('/platform') && location.pathname !== '/account') {
       throw redirect({ to: '/no-workspace' })
     }

@@ -1,4 +1,6 @@
+import { passkey } from '@better-auth/passkey'
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
+import { APIError } from 'better-auth/api'
 import { getMigrations } from 'better-auth/db/migration'
 import { admin } from 'better-auth/plugins/admin'
 import { organization } from 'better-auth/plugins/organization'
@@ -9,6 +11,37 @@ import { db } from './db.server'
 import { env } from './env.server'
 import { sendInvitationEmail } from './mail.server'
 
+export type Provider = 'google' | 'github' | 'microsoft'
+
+export function enabledProviders(): Provider[] {
+  return (Object.keys(env.oauth) as Provider[]).filter((p) => env.oauth[p])
+}
+
+function socialProviders() {
+  const { google, github, microsoft } = env.oauth
+  return {
+    ...(google && { google }),
+    ...(github && { github: { ...github, scope: ['read:user', 'user:email'] } }),
+    ...(microsoft && { microsoft: { ...microsoft, tenantId: env.microsoftTenantId } }),
+  }
+}
+
+/** How a session was secured. Password-only and social sessions have none until a step-up. */
+function secondFactorFor(path: string | undefined): 'totp' | 'passkey' | null {
+  if (!path) return null
+  if (path.startsWith('/two-factor/verify-')) return 'totp'
+  if (path.startsWith('/passkey/verify-authentication')) return 'passkey'
+  return null
+}
+
+function hasPendingInvitation(email: string) {
+  return Boolean(
+    db()
+      .prepare("SELECT 1 FROM invitation WHERE lower(email) = lower(?) AND status = 'pending' AND expiresAt > ?")
+      .get(email, new Date().toISOString()),
+  )
+}
+
 function authOptions() {
   return {
     appName: 'Convex Backup Console',
@@ -18,7 +51,33 @@ function authOptions() {
     trustedOrigins: [env.publicUrl],
     // Accounts are only created by the first-boot seed or by accepting an invitation.
     emailAndPassword: { enabled: true, disableSignUp: true, minPasswordLength: 12 },
-    session: { expiresIn: 60 * 60 * 24, updateAge: 60 * 60 },
+    session: {
+      expiresIn: 60 * 60 * 24,
+      updateAge: 60 * 60,
+      additionalFields: { mfa: { type: 'string', required: false, input: false } },
+    },
+    socialProviders: socialProviders(),
+    // Social sign-in links to an existing account with the same (provider-verified) email.
+    account: { accountLinking: { enabled: true, trustedProviders: ['google', 'github', 'microsoft'] } },
+    databaseHooks: {
+      user: {
+        create: {
+          before: async (user, ctx) => {
+            // Invite-only: a social sign-in may only create an account for a pending invitation.
+            const path = ctx?.path ?? ''
+            if ((path.startsWith('/callback') || path.startsWith('/sign-in/social')) && !hasPendingInvitation(user.email)) {
+              throw new APIError('FORBIDDEN', { message: 'no_invitation' })
+            }
+            return { data: user }
+          },
+        },
+      },
+      session: {
+        create: {
+          before: async (session, ctx) => ({ data: { ...session, mfa: secondFactorFor(ctx?.path) } }),
+        },
+      },
+    },
     rateLimit: {
       enabled: true,
       storage: 'database' as const,
@@ -36,7 +95,9 @@ function authOptions() {
       ipAddress: { ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for'] },
     },
     plugins: [
-      twoFactor({ issuer: 'Convex Backup Console' }),
+      // allowPasswordless: social-only users can enrol TOTP without a password.
+      twoFactor({ issuer: 'Convex Backup Console', allowPasswordless: true }),
+      passkey({ rpID: new URL(env.publicUrl).hostname, rpName: 'Convex Backup Console', origin: env.publicUrl }),
       // Platform admins (user.role = 'admin') create workspaces and manage users.
       admin({ defaultRole: 'user', adminRoles: ['admin'] }),
       organization({

@@ -3,7 +3,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { can, ROLES } from '~/lib/permissions'
-import { auth, createUserWithPassword } from './auth.server'
+import { auth, createUserWithPassword, enabledProviders } from './auth.server'
 import { isInstanceBusy, startJob } from './backup.server'
 import { ensureBooted } from './boot.server'
 import { ConvexAdmin, parseDeployKey, resolveCloudUrl } from './convex.server'
@@ -17,6 +17,7 @@ import { isRestoring, startRestore } from './restore.server'
 import { nextRun, syncSchedules } from './scheduler.server'
 import { openDestination, type DestinationRow } from './storage.server'
 import { requirePlatformAdmin, requireWorkspace, resolveContext, workspaceSettings } from './workspace.server'
+import { resetSecondFactors, stepUpWithTotp, upgradeAfterPasskeyRegistration } from './security.server'
 
 const parse =
   <T extends z.ZodType>(schema: T) =>
@@ -30,8 +31,44 @@ const headers = () => getRequest().headers
 /** Minimal session info for auth pages. */
 export const getUser = createServerFn({ method: 'GET' }).handler(async () => {
   const ctx = await resolveContext()
-  return ctx ? { email: ctx.user.email, twoFactorEnabled: ctx.user.twoFactorEnabled } : null
+  return ctx
+    ? {
+        email: ctx.user.email,
+        twoFactorEnabled: ctx.user.twoFactorEnabled,
+        hasTotp: ctx.user.hasTotp,
+        passkeys: ctx.user.passkeys,
+        sessionFactor: ctx.user.sessionFactor,
+        hasPassword: Boolean(db().prepare("SELECT 1 FROM account WHERE userId = ? AND providerId = 'credential'").get(ctx.user.id)),
+      }
+    : null
 })
+
+/** Public: which sign-in methods are configured (drives the login page). */
+export const getAuthProviders = createServerFn({ method: 'GET' }).handler(async () => {
+  await ensureBooted()
+  return { providers: enabledProviders() }
+})
+
+/** Upgrades a social sign-in session with a TOTP code. */
+export const stepUp = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code') })))
+  .handler(async ({ data }) => {
+    const ctx = await resolveContext()
+    if (!ctx) throw new Error('Unauthorized')
+    await stepUpWithTotp(ctx.user.id, ctx.sessionToken, data.code)
+    audit(null, ctx.user.email, 'auth.step_up', { factor: 'totp' })
+  })
+
+/** Called right after enrolling TOTP or a passkey on /security, so the enrolling session counts as verified. */
+export const confirmEnrolment = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ method: z.enum(['totp', 'passkey']), code: z.string().optional() })))
+  .handler(async ({ data }) => {
+    const ctx = await resolveContext()
+    if (!ctx) throw new Error('Unauthorized')
+    if (data.method === 'totp') await stepUpWithTotp(ctx.user.id, ctx.sessionToken, data.code ?? '')
+    else upgradeAfterPasskeyRegistration(ctx.user.id, ctx.sessionToken)
+    audit(null, ctx.user.email, 'auth.second_factor_enrolled', { method: data.method })
+  })
 
 /** Everything the app shell needs: user, workspaces, the active one and its settings. */
 export const getAppContext = createServerFn({ method: 'GET' }).handler(async () => {
@@ -947,7 +984,7 @@ export const getPlatform = createServerFn({ method: 'GET' }).handler(async () =>
     .all() as { id: string; name: string; slug: string; logo: string | null; deleted_at: number | null; trash_days: number; members: number; instances: number }[]
   const users = db()
     .prepare(
-      `SELECT u.id, u.name, u.email, u.role, u.twoFactorEnabled AS two_factor, u.createdAt AS created_at,
+      `SELECT u.id, u.name, u.email, u.role, (u.twoFactorEnabled OR EXISTS (SELECT 1 FROM passkey p WHERE p.userId = u.id)) AS two_factor, u.createdAt AS created_at,
          (SELECT COUNT(*) FROM member m WHERE m.userId = u.id) AS workspaces
        FROM user u ORDER BY u.email`,
     )
@@ -959,6 +996,15 @@ export const getPlatform = createServerFn({ method: 'GET' }).handler(async () =>
     smtp: smtp ? { ...smtp, pass: smtp.pass ? '••••••••' : '' } : null,
   }
 })
+
+export const resetUserSecondFactors = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ userId: z.string() })))
+  .handler(async ({ data }) => {
+    const ctx = await requirePlatformAdmin()
+    if (data.userId === ctx.user.id) throw new Error("Use your own Account page to manage your factors")
+    resetSecondFactors(data.userId)
+    audit(null, ctx.user.email, 'platform.second_factors_reset', { userId: data.userId })
+  })
 
 export const setPlatformAdmin = createServerFn({ method: 'POST' })
   .validator(parse(z.object({ userId: z.string(), admin: z.boolean() })))

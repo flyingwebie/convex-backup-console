@@ -3,6 +3,7 @@ import { can, type Action, type Role } from '~/lib/permissions'
 import { auth } from './auth.server'
 import { ensureBooted } from './boot.server'
 import { db, getSetting, setSetting } from './db.server'
+import { factorsOf, sessionFactor } from './security.server'
 
 export type WorkspaceSettings = {
   workspace_id: string
@@ -52,14 +53,20 @@ export async function resolveContext() {
   if (active && active.id !== session.session.activeOrganizationId) {
     await auth().api.setActiveOrganization({ headers, body: { organizationId: active.id } }).catch(() => {})
   }
+  const factors = factorsOf(user.id)
   return {
     user: {
       id: user.id,
       email: user.email,
       name: user.name,
-      twoFactorEnabled: Boolean(user.twoFactorEnabled),
+      // Account has a second factor (TOTP or passkey) and this session used it.
+      twoFactorEnabled: factors.any,
+      hasTotp: factors.totp,
+      passkeys: factors.passkeys,
+      sessionFactor: sessionFactor(session.session.token),
       isPlatformAdmin: user.role === 'admin',
     },
+    sessionToken: session.session.token,
     workspaces,
     active,
   }
@@ -72,6 +79,7 @@ export async function requireWorkspace(action: Action) {
   const ctx = await resolveContext()
   if (!ctx) throw new Error('Unauthorized')
   if (!ctx.user.twoFactorEnabled) throw new Error('Two-factor authentication must be enabled first')
+  if (!ctx.user.sessionFactor) throw new Error('Verify with your authenticator app or passkey first')
   if (!ctx.active) throw new Error('You are not a member of any workspace yet')
   if (!can(ctx.active.role, action)) throw new Error(`Your role (${ctx.active.role}) cannot do this`)
   return { ...ctx, ws: ctx.active }
@@ -79,7 +87,7 @@ export async function requireWorkspace(action: Action) {
 
 export async function requirePlatformAdmin() {
   const ctx = await resolveContext()
-  if (!ctx?.user.twoFactorEnabled || !ctx.user.isPlatformAdmin) throw new Error('Platform admins only')
+  if (!ctx?.user.twoFactorEnabled || !ctx.user.sessionFactor || !ctx.user.isPlatformAdmin) throw new Error('Platform admins only')
   return ctx
 }
 

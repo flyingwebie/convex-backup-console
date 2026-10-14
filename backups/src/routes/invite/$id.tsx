@@ -10,15 +10,20 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from '~/components/ui
 import { Input } from '~/components/ui/input'
 import { authClient } from '~/lib/auth-client'
 import { ROLE_INFO, type Role } from '~/lib/permissions'
-import { getInvitation, getUser, registerFromInvitation } from '~/server/fns'
+import { getAuthProviders, getInvitation, getUser, registerFromInvitation } from '~/server/fns'
+import { OrDivider, SocialButtons } from '~/components/social-buttons'
 
 export const Route = createFileRoute('/invite/$id')({
-  loader: async ({ params }) => ({ invitation: await getInvitation({ data: { id: params.id } }), user: await getUser() }),
+  loader: async ({ params }) => ({
+    invitation: await getInvitation({ data: { id: params.id } }),
+    user: await getUser(),
+    providers: (await getAuthProviders()).providers,
+  }),
   component: Invite,
 })
 
 function Invite() {
-  const { invitation: inv, user } = Route.useLoaderData()
+  const { invitation: inv, user, providers } = Route.useLoaderData()
   const { id } = Route.useParams()
   const navigate = useNavigate()
   const register = useServerFn(registerFromInvitation)
@@ -48,7 +53,7 @@ function Invite() {
     setBusy(false)
     if (res.error) return setError(res.error.message ?? 'Could not accept the invitation')
     await authClient.organization.setActive({ organizationId: res.data?.member.organizationId ?? null })
-    await navigate({ to: user?.twoFactorEnabled ? '/' : '/security' })
+    await navigate({ to: !user?.twoFactorEnabled ? '/security' : user.sessionFactor ? '/' : '/verify' })
   }
 
   async function createAccount(e: React.FormEvent<HTMLFormElement>) {
@@ -107,6 +112,12 @@ function Invite() {
           ) : (
             <form onSubmit={createAccount}>
               <FieldGroup>
+                {providers.length > 0 && (
+                  <>
+                    <SocialButtons providers={providers} callbackURL={`/invite/${id}`} label="Join with" />
+                    <OrDivider />
+                  </>
+                )}
                 <Field>
                   <FieldLabel htmlFor="name">Your name</FieldLabel>
                   <Input id="name" name="name" required autoFocus autoComplete="name" />

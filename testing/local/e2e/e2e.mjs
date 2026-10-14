@@ -24,12 +24,20 @@ function totp(secret) {
   return String((h.readUInt32BE(o) & 0x7fffffff) % 1e6).padStart(6, '0')
 }
 
-async function enrol2fa(p, password, beforeCode) { // returns nothing; enrols TOTP on /security
+/** Enrols TOTP on /security and returns the secret. */
+async function enrol2fa(p, password, beforeCode) {
   await p.getByLabel('Confirm your password').fill(password)
   await p.getByRole('button', { name: 'Continue' }).click()
   const secret = (await p.locator('p code').first().textContent()).trim()
   await beforeCode?.()
   await p.locator('input[autocomplete="one-time-code"], [data-input-otp]').first().fill(totp(secret))
+  return secret
+}
+
+const CONTAINER = process.env.CONSOLE_CONTAINER ?? 'cbc-e2e'
+/** Runs SQL inside the console container (test-only backdoor). */
+function sql(query) {
+  return execSync(`docker exec -i ${CONTAINER} node -e "const d=require('/app/node_modules/better-sqlite3')('/data/console.db');console.log(JSON.stringify(d.prepare(process.argv[1]).run()))" ${JSON.stringify(query)}`).toString()
 }
 
 let step = 0
@@ -49,19 +57,61 @@ try {
   await page.waitForURL(/\/login/)
   await shot('01-login')
   await page.getByLabel('Email').fill(EMAIL)
+  // OAuth buttons appear for configured providers and redirect to the right IdP
+  for (const [name, host] of [['Google', 'accounts.google.com'], ['GitHub', 'github.com'], ['Microsoft', 'login.microsoftonline.com']]) {
+    const req = page.waitForRequest((r) => r.url().includes(host), { timeout: 15_000 })
+    await page.route(`**://${host}/**`, (r) => r.abort())
+    await page.getByRole('button', { name: `Continue with ${name}` }).click()
+    const url = new URL((await req).url())
+    if (!url.searchParams.get('client_id')?.startsWith('test-')) throw new Error(`${name}: missing client_id`)
+    if (!url.searchParams.get('redirect_uri')?.endsWith(`/api/auth/callback/${name.toLowerCase()}`)) throw new Error(`${name}: wrong redirect_uri`)
+    await page.unroute(`**://${host}/**`)
+    await page.goto(`${URL_}/login`)
+  }
+  ok('Google, GitHub and Microsoft buttons redirect to their IdP with our client id and callback')
+  await page.getByLabel('Email').fill(EMAIL)
   await page.getByLabel('Password').fill('wrong-password-1')
-  await page.getByRole('button', { name: 'Sign in' }).click()
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await page.getByText(/invalid/i).waitFor()
   ok('wrong password is rejected')
   await page.getByLabel('Password').fill(PASSWORD)
-  await page.getByRole('button', { name: 'Sign in' }).click()
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await page.waitForURL(/\/security/)
   ok('login forces 2FA enrolment')
-  await enrol2fa(page, PASSWORD, () => shot('02-2fa-enrol'))
+  const adminSecret = await enrol2fa(page, PASSWORD, () => shot('02-2fa-enrol'))
   await page.waitForURL(`${URL_}/`)
   await page.getByText("Let's protect your first Convex instance").waitFor()
   ok('TOTP enrolled; empty-state overview shown')
   await shot('03-overview-empty')
+
+  // Step-up gate: a session without a verified factor (what a social sign-in gives) is sent to /verify
+  sql("UPDATE session SET mfa = NULL")
+  await page.goto(`${URL_}/`)
+  await page.waitForURL(/\/verify/)
+  await page.getByText("Confirm it's you").waitFor()
+  await shot('03b-verify')
+  await page.locator('[data-input-otp]').first().fill(totp(adminSecret))
+  await page.waitForURL(`${URL_}/`)
+  ok('unverified session is stepped up with TOTP on /verify')
+
+  // Passkeys via Chromium's virtual authenticator: add one, sign out, sign in with it
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('WebAuthn.enable')
+  await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true },
+  })
+  await page.goto(`${URL_}/account`)
+  await page.getByRole('button', { name: 'Add a passkey' }).click()
+  await page.getByText('Passkey added').waitFor()
+  await shot('03c-account')
+  await page.locator('[data-sidebar="footer"] button').first().click()
+  await page.getByRole('menuitem', { name: 'Sign out' }).click()
+  await page.waitForURL(/\/login/)
+  await page.getByRole('button', { name: 'Sign in with a passkey' }).click()
+  await page.waitForURL(`${URL_}/`)
+  await page.goto(`${URL_}/account`)
+  await page.getByText('passkey', { exact: false }).first().waitFor()
+  ok('passkey registered, then used to sign in (no password, no TOTP prompt)')
 
   // ── Instances ──
   await page.getByRole('link', { name: 'Instances' }).click()

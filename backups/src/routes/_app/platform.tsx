@@ -16,7 +16,7 @@ import { Switch } from '~/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { formatDate, timeAgo } from '~/lib/format'
 import { useAction } from '~/lib/use-action'
-import { getPlatform, purgeWorkspaceNow, restoreWorkspaceFromTrash, saveSmtpSettings, setPlatformAdmin, testSmtp } from '~/server/fns'
+import { getPlatform, purgeWorkspaceNow, resetUserSecondFactors, restoreWorkspaceFromTrash, saveSmtpSettings, setPlatformAdmin, testSmtp } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/platform')({
   beforeLoad: ({ context }) => {
@@ -31,6 +31,7 @@ function Platform() {
   const { app } = Route.useRouteContext()
   const [creating, setCreating] = useState(false)
   const setAdmin = useServerFn(setPlatformAdmin)
+  const reset2fa = useServerFn(resetUserSecondFactors)
   const restoreWs = useServerFn(restoreWorkspaceFromTrash)
   const purgeWs = useServerFn(purgeWorkspaceNow)
   const { run } = useAction()
@@ -114,6 +115,7 @@ function Platform() {
                   <TableHead>Workspaces</TableHead>
                   <TableHead>Joined</TableHead>
                   <TableHead>Platform admin</TableHead>
+                  <TableHead className="w-36" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -133,6 +135,17 @@ function Platform() {
                         aria-label="Platform admin"
                         onCheckedChange={(admin) => run(() => setAdmin({ data: { userId: u.id, admin } }), { success: admin ? `${u.email} is now a platform admin` : `${u.email} is no longer a platform admin` })}
                       />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {u.id !== app.user.id && u.two_factor && (
+                        <Confirm
+                          trigger={<Button size="sm" variant="ghost">Reset 2FA</Button>}
+                          title={`Reset ${u.email}'s second factors?`}
+                          description="Removes their authenticator app and passkeys and signs them out everywhere. They'll set up a new factor at next sign-in. Only do this after confirming their identity."
+                          action="Reset 2FA"
+                          onConfirm={() => run(() => reset2fa({ data: { userId: u.id } }), { success: `${u.email} must set up 2FA again` })}
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
