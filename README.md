@@ -76,6 +76,7 @@ Convex Backup Console does all of that in a single container.
 - 🔔 **Chat alerts:** Slack, Discord, Telegram, webhook.
 - 🩺 **Status URL** for Uptime Kuma, Better Stack and UptimeRobot (200 healthy / 503 not).
 - 🚀 **REST API + GitHub Action:** back up right before `npx convex deploy`, with a per-workspace switch to turn API access off (the Action then skips).
+- 🧭 **Guided product tour** on first sign-in (role-aware, replayable from the account menu) walks new users from connecting an instance to their first restore.
 - 🗑️ **Trash & deletion policy:** restore deleted items for N days, with **separate toggles** for deleting their backup files from **remote** (S3/R2/B2) and **local** storage, each with its own delay in days.
 - 📜 **Audit log** of every action, exportable as CSV.
 

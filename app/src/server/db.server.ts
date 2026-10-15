@@ -190,6 +190,8 @@ function migrate(conn: Database.Database) {
   add('workspace_settings', 'purge_local_days', 'INTEGER NOT NULL DEFAULT 0')
   add('run_copies', 'delete_after', 'INTEGER')
   add('workspace_settings', 'theme', "TEXT NOT NULL DEFAULT 'neutral'")
+  // Per-user UI state (product tour).
+  conn.exec('CREATE TABLE IF NOT EXISTS user_prefs (user_id TEXT PRIMARY KEY, tour_seen_at INTEGER)')
   conn.exec(`CREATE TABLE IF NOT EXISTS api_tokens (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,

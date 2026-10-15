@@ -92,6 +92,37 @@ try {
   await page.waitForURL(`${URL_}/`)
   await page.getByText("Let's protect your first Convex instance").waitFor()
   ok('TOTP enrolled; empty-state overview shown')
+
+  // Product tour starts by itself on the first visit; walk it to the end
+  const tourPop = page.locator('.driver-popover')
+  const tourTitle = tourPop.locator('.driver-popover-title')
+  await tourPop.getByText('Welcome to Convex Backup Console').waitFor()
+  await shot('03a-tour-welcome')
+  const titles = []
+  for (let i = 0; i < 20; i++) {
+    titles.push((await tourTitle.textContent()).trim())
+    if (titles.length === 3) await shot('03a-tour-instances')
+    const btn = tourPop.locator('.driver-popover-next-btn')
+    const last = (await btn.textContent()).includes('Finish')
+    await btn.click()
+    if (last) break
+    await page.waitForFunction((prev) => document.querySelector('.driver-popover-title')?.textContent?.trim() !== prev, titles.at(-1))
+  }
+  await tourPop.waitFor({ state: 'hidden' })
+  // Owner + platform admin: every step, ending on the account menu.
+  if (titles.length !== 13 || titles.at(-1) !== 'Your account') throw new Error(`Unexpected tour: ${titles.join(' | ')}`)
+  for (let i = 0; i < 10 && !dbGet('SELECT 1 AS x FROM user_prefs WHERE tour_seen_at IS NOT NULL'); i++) await page.waitForTimeout(300)
+  if (!dbGet('SELECT 1 AS x FROM user_prefs WHERE tour_seen_at IS NOT NULL')) throw new Error('Tour not marked as seen')
+  await page.reload()
+  await page.getByText("Let's protect your first Convex instance").waitFor()
+  await page.waitForTimeout(1500)
+  if (await tourPop.count()) throw new Error('Tour started again after it was finished')
+  await page.locator('[data-tour="account"]').click()
+  await page.getByRole('menuitem', { name: 'Take the tour' }).click()
+  await tourPop.getByText('Welcome to Convex Backup Console').waitFor()
+  await page.keyboard.press('Escape')
+  await tourPop.waitFor({ state: 'hidden' })
+  ok(`product tour: starts on first visit (${titles.length} steps), not again once finished; replayable from the account menu`)
   await shot('03-overview-empty')
 
   // Step-up gate: a session without a verified factor (what a social sign-in gives) is sent to /verify
@@ -318,6 +349,10 @@ try {
   const vSidebar = v.locator('[data-sidebar="sidebar"]').first()
   await vSidebar.getByText('Acme Corp').waitFor()
   await vSidebar.getByText('Viewer', { exact: true }).waitFor()
+  // Viewers get a shorter tour (no notifications, settings, members or platform steps); Escape closes it.
+  await v.locator('.driver-popover-progress-text').getByText('1 of 9').waitFor()
+  await v.keyboard.press('Escape')
+  await v.locator('.driver-popover').waitFor({ state: 'hidden' })
   if (await vSidebar.getByText('Flying Web').count()) throw new Error('Viewer can see another workspace')
   if (await vSidebar.getByRole('link', { name: /Workspaces & users/ }).count()) throw new Error('Viewer sees Platform')
   await v.getByRole('link', { name: 'Instances' }).click()
@@ -399,6 +434,7 @@ try {
   await page.getByText('Violet theme applied').waitFor()
   await page.reload()
   await page.getByRole('radio', { name: 'Violet', checked: true }).waitFor()
+  await page.waitForLoadState('networkidle') // hydrated before typing into the policy form
   if ((await page.evaluate(() => document.documentElement.dataset.theme)) !== 'violet') throw new Error('Theme not applied to <html>')
   ok('workspace colour theme: Violet applied and kept after a reload')
 
