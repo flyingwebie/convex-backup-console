@@ -40,7 +40,7 @@ function Trash() {
           </AlertTitle>
           <AlertDescription>
             <span>
-              {purgeSummary(data.purge_remote, data.purge_local)}{' '}
+              {purgeSummary(data)}{' '}
               {can('settings') && <Link to="/workspace" className="underline">Change the deletion policy</Link>}
             </span>
           </AlertDescription>
@@ -92,7 +92,7 @@ function Trash() {
                               description={
                                 i.kind === 'destination'
                                   ? 'This cannot be undone. Backup files already stored in it are kept.'
-                                  : `This cannot be undone. ${purgeSummary(data.purge_remote, data.purge_local, 'Its')}`
+                                  : `This cannot be undone. ${purgeSummary(data, 'Its')}`
                               }
                               action="Delete permanently"
                               onConfirm={() => run(() => purge({ data: { kind: i.kind, id: i.id } }), { success: `${i.name} permanently deleted` })}

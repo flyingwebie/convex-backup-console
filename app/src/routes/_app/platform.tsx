@@ -74,7 +74,7 @@ function Platform() {
                     {w.deleted_at ? (
                       <div>
                         <Badge variant="outline" className="border-red-500/30 text-red-600">Deleted</Badge>
-                        <div className="text-muted-foreground mt-1 text-xs">purged {timeAgo(w.deleted_at + w.trash_days * 86_400_000)}</div>
+                        <div className="text-muted-foreground mt-1 text-xs">purged {timeAgo(w.purge_at!)}</div>
                       </div>
                     ) : (
                       <Badge variant="secondary">Active</Badge>

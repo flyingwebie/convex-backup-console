@@ -10,6 +10,7 @@ Scheduled, encrypted, off-site backups for **self-hosted Convex** and **Convex C
 point-and-click restores, ransomware-proof storage and a console your whole team can use.
 Plus a production-ready **Convex-on-Coolify** template to run the instances themselves.
 
+[![Version](https://img.shields.io/badge/version-1.0.0--beta.1-orange.svg)](CHANGELOG.md)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Deploy on Coolify](https://img.shields.io/badge/deploy%20on-Coolify-8C52FF?logo=coolify&logoColor=white)](docs/coolify.md)
 [![Convex](https://img.shields.io/badge/Convex-self--hosted%20%26%20Cloud-EE342F)](https://convex.dev)
@@ -75,7 +76,8 @@ Convex Backup Console does all of that in a single container.
 - 🔔 **Chat alerts:** Slack, Discord, Telegram, webhook.
 - 🩺 **Status URL** for Uptime Kuma, Better Stack and UptimeRobot (200 healthy / 503 not).
 - 🚀 **REST API + GitHub Action:** back up right before `npx convex deploy`, with a per-workspace switch to turn API access off (the Action then skips).
-- 🗑️ **Trash & deletion policy:** restore deleted items for N days, with **separate toggles** for deleting their backup files from **remote** (S3/R2/B2) and **local** storage.
+- 🧭 **Guided product tour** on first sign-in (role-aware, replayable from the account menu) walks new users from connecting an instance to their first restore.
+- 🗑️ **Trash & deletion policy:** restore deleted items for N days, with **separate toggles** for deleting their backup files from **remote** (S3/R2/B2) and **local** storage, each with its own delay in days.
 - 📜 **Audit log** of every action, exportable as CSV.
 
 **Teams**
@@ -146,7 +148,7 @@ Put it behind HTTPS (Traefik, Caddy, Nginx or a Cloudflare Tunnel; see [`app/doc
 |---|---|
 | ![Overview](docs/images/screens/overview.png) **Overview:** health of every instance | ![Runs](docs/images/screens/runs.png) **Runs:** every backup and its copies |
 | ![Contents](docs/images/screens/contents.png) **Contents:** tables, rows, changes since last backup | ![Restore](docs/images/screens/restore.png) **Restore:** pick target, mode, tables, scrubbing |
-| ![Storage](docs/images/screens/storage.png) **Storage:** growth and monthly cost | ![Workspace](docs/images/screens/workspace.png) **Workspace settings:** branding, defaults, policies |
+| ![Storage](docs/images/screens/storage.png) **Storage:** growth and monthly cost | ![Workspace](docs/images/screens/workspace.png) **Workspace settings:** branding, colour theme, defaults, policies |
 | ![Destinations](docs/images/screens/destinations.png) **Destinations** with Object Lock | ![Members](docs/images/screens/members.png) **Members & roles** |
 | ![Login](docs/images/screens/login.png) **Sign-in:** password, Google, GitHub, Microsoft, passkeys | ![Dark mode](docs/images/screens/overview-dark.png) **Dark mode** |
 

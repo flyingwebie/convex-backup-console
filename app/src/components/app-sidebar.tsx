@@ -6,6 +6,7 @@ import {
   CalendarClock,
   Check,
   ChevronsUpDown,
+  Compass,
   Database,
   HardDrive,
   LayoutDashboard,
@@ -55,39 +56,40 @@ import { ROLE_INFO, can, type Action } from '~/lib/permissions'
 import { switchWorkspace, type getAppContext } from '~/server/fns'
 
 type App = NonNullable<Awaited<ReturnType<typeof getAppContext>>>
-type Item = { to: string; label: string; icon: typeof Database; need?: Action }
+/** `tour` is the product-tour target (`data-tour="nav-…"`, see ~/lib/tour). */
+type Item = { to: string; label: string; icon: typeof Database; need?: Action; tour?: string }
 
 const nav: { label: string; items: Item[] }[] = [
   {
     label: 'Backups',
     items: [
-      { to: '/', label: 'Overview', icon: LayoutDashboard },
-      { to: '/jobs', label: 'Jobs', icon: CalendarClock },
-      { to: '/runs', label: 'Runs & restores', icon: Activity },
+      { to: '/', label: 'Overview', icon: LayoutDashboard, tour: 'overview' },
+      { to: '/jobs', label: 'Jobs', icon: CalendarClock, tour: 'jobs' },
+      { to: '/runs', label: 'Runs & restores', icon: Activity, tour: 'runs' },
       { to: '/storage', label: 'Storage', icon: PieChart },
     ],
   },
   {
     label: 'Setup',
     items: [
-      { to: '/instances', label: 'Instances', icon: Database },
-      { to: '/destinations', label: 'Destinations', icon: HardDrive },
+      { to: '/instances', label: 'Instances', icon: Database, tour: 'instances' },
+      { to: '/destinations', label: 'Destinations', icon: HardDrive, tour: 'destinations' },
       { to: '/emails', label: 'Emails', icon: Mail },
-      { to: '/notifications', label: 'Notifications', icon: Bell },
+      { to: '/notifications', label: 'Notifications', icon: Bell, tour: 'notifications' },
     ],
   },
   {
     label: 'Workspace',
     items: [
-      { to: '/workspace', label: 'Settings', icon: Settings2 },
-      { to: '/members', label: 'Members', icon: Users },
-      { to: '/trash', label: 'Trash', icon: Trash2 },
+      { to: '/workspace', label: 'Settings', icon: Settings2, tour: 'settings' },
+      { to: '/members', label: 'Members', icon: Users, tour: 'members' },
+      { to: '/trash', label: 'Trash', icon: Trash2, tour: 'trash' },
       { to: '/audit', label: 'Audit log', icon: ScrollText },
     ],
   },
 ]
 
-export function AppSidebar({ app }: { app: App }) {
+export function AppSidebar({ app, onTour }: { app: App; onTour: () => void }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const router = useRouter()
   const { theme, setTheme } = useTheme()
@@ -103,7 +105,7 @@ export function AppSidebar({ app }: { app: App }) {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent">
+                <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent" data-tour="workspace">
                   <WorkspaceLogo name={active?.name ?? '—'} logo={active?.logo} />
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-semibold">{active?.name ?? 'No workspace'}</span>
@@ -153,7 +155,7 @@ export function AppSidebar({ app }: { app: App }) {
                     .filter((i) => !i.need || can(active.role, i.need))
                     .map((item) => (
                       <SidebarMenuItem key={item.to}>
-                        <SidebarMenuButton asChild tooltip={item.label} isActive={isActive(item.to)}>
+                        <SidebarMenuButton asChild tooltip={item.label} isActive={isActive(item.to)} data-tour={item.tour && `nav-${item.tour}`}>
                           <Link to={item.to}>
                             <item.icon />
                             <span>{item.label}</span>
@@ -171,7 +173,7 @@ export function AppSidebar({ app }: { app: App }) {
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild tooltip="Platform" isActive={isActive('/platform')}>
+                  <SidebarMenuButton asChild tooltip="Platform" isActive={isActive('/platform')} data-tour="nav-platform">
                     <Link to="/platform">
                       <Server />
                       <span>Workspaces & users</span>
@@ -188,7 +190,7 @@ export function AppSidebar({ app }: { app: App }) {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg">
+                <SidebarMenuButton size="lg" data-tour="account">
                   <div className="bg-muted flex aspect-square size-8 items-center justify-center rounded-lg text-xs font-semibold uppercase">
                     {app.user.email.slice(0, 2)}
                   </div>
@@ -203,6 +205,9 @@ export function AppSidebar({ app }: { app: App }) {
                   <Link to="/account">
                     <UserRound /> Account & security
                   </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onTour}>
+                  <Compass /> Take the tour
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">Theme</DropdownMenuLabel>
