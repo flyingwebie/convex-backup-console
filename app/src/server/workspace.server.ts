@@ -20,6 +20,9 @@ export type WorkspaceSettings = {
   purge_backups: number
   purge_remote: number
   purge_local: number
+  purge_remote_days: number
+  purge_local_days: number
+  theme: string
   api_enabled: number
   age_recipient: string | null
   age_identity_enc: string | null

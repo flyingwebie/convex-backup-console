@@ -1,6 +1,8 @@
+import { useEffect } from 'react'
 import { Outlet, createFileRoute, redirect } from '@tanstack/react-router'
 import { AppSidebar } from '~/components/app-sidebar'
 import { SidebarInset, SidebarProvider } from '~/components/ui/sidebar'
+import { isTheme } from '~/lib/themes'
 import { getAppContext } from '~/server/fns'
 
 export const Route = createFileRoute('/_app')({
@@ -20,8 +22,15 @@ export const Route = createFileRoute('/_app')({
 
 function AppLayout() {
   const { app } = Route.useRouteContext()
+  const theme = isTheme(app.settings?.theme) ? app.settings.theme : 'neutral'
+  // On <html> (not a wrapper) so dialogs and popovers portalled to <body> pick it up too.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
   return (
     <SidebarProvider>
+      {/* Applied before first paint on server-rendered loads, so the accent doesn't flash. */}
+      <script dangerouslySetInnerHTML={{ __html: `document.documentElement.dataset.theme=${JSON.stringify(theme)}` }} />
       <AppSidebar app={app} />
       <SidebarInset>
         {/* Remount pages when switching workspace so no state leaks across. */}

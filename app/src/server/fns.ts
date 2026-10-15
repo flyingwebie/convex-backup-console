@@ -3,6 +3,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { can, ROLES } from '~/lib/permissions'
+import { THEMES } from '~/lib/themes'
 import { auth, createUserWithPassword, enabledProviders } from './auth.server'
 import { isInstanceBusy, startJob } from './backup.server'
 import { ensureBooted } from './boot.server'
@@ -21,7 +22,7 @@ import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { decryptStream } from './encryption.server'
 import { inspectZip, type Manifest, type ScrubRule } from './zip.server'
-import { purgeItem, purgeWorkspace, restoreItem, restoreWorkspace, softDelete, softDeleteWorkspace } from './purge.server'
+import { purgeItem, purgeWorkspace, restoreItem, restoreWorkspace, softDelete, softDeleteWorkspace, workspaceGraceDays } from './purge.server'
 import { isRestoring, startRestore } from './restore.server'
 import { nextRun, syncSchedules } from './scheduler.server'
 import { openDestination, type DestinationRow } from './storage.server'
@@ -95,6 +96,7 @@ export const getAppContext = createServerFn({ method: 'GET' }).handler(async () 
       timezone: settings.timezone,
       stale_hours: settings.stale_hours,
       trash_days: settings.trash_days,
+      theme: settings.theme,
       encryption: Boolean(settings.age_recipient),
     },
   }
@@ -777,6 +779,10 @@ export const getWorkspace = createServerFn({ method: 'GET' }).handler(async () =
       trash_days: s.trash_days,
       purge_remote: Boolean(s.purge_remote),
       purge_local: Boolean(s.purge_local),
+      purge_remote_days: s.purge_remote_days,
+      purge_local_days: s.purge_local_days,
+      grace_days: workspaceGraceDays(ws.id),
+      theme: s.theme,
       recipient: s.age_recipient,
       status_url: s.status_token ? `${env.publicUrl}/api/status/${s.status_token}` : null,
       digest: s.digest,
@@ -832,14 +838,27 @@ export const updateWorkspaceDefaults = createServerFn({ method: 'POST' })
     audit(ws.id, user.email, 'workspace.defaults_updated', data)
   })
 
+const days = z.number().int().min(0).max(365)
 export const updateDeletionPolicy = createServerFn({ method: 'POST' })
-  .validator(parse(z.object({ trashDays: z.number().int().min(0).max(365), purgeRemote: z.boolean(), purgeLocal: z.boolean() })))
+  .validator(
+    parse(z.object({ trashDays: days, purgeRemote: z.boolean(), purgeLocal: z.boolean(), purgeRemoteDays: days, purgeLocalDays: days })),
+  )
   .handler(async ({ data }) => {
     const { ws, user } = await requireWorkspace('purge')
     db()
-      .prepare('UPDATE workspace_settings SET trash_days = ?, purge_remote = ?, purge_local = ? WHERE workspace_id = ?')
-      .run(data.trashDays, data.purgeRemote ? 1 : 0, data.purgeLocal ? 1 : 0, ws.id)
+      .prepare(
+        'UPDATE workspace_settings SET trash_days = ?, purge_remote = ?, purge_local = ?, purge_remote_days = ?, purge_local_days = ? WHERE workspace_id = ?',
+      )
+      .run(data.trashDays, data.purgeRemote ? 1 : 0, data.purgeLocal ? 1 : 0, data.purgeRemoteDays, data.purgeLocalDays, ws.id)
     audit(ws.id, user.email, 'workspace.deletion_policy_updated', data)
+  })
+
+export const updateWorkspaceTheme = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ theme: z.enum(THEMES) })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('settings')
+    db().prepare('UPDATE workspace_settings SET theme = ? WHERE workspace_id = ?').run(data.theme, ws.id)
+    audit(ws.id, user.email, 'workspace.theme_updated', data)
   })
 
 export const rotateStatusToken = createServerFn({ method: 'POST' })
@@ -891,7 +910,7 @@ export const deleteWorkspace = createServerFn({ method: 'POST' })
     const { ws, user } = await requireWorkspace('deleteWorkspace')
     if (data.confirm !== ws.name) throw new Error(`Type "${ws.name}" to confirm`)
     softDeleteWorkspace(ws.id, user.email)
-    if (workspaceSettings(ws.id).trash_days === 0) await purgeWorkspace(ws.id, user.email)
+    if (workspaceGraceDays(ws.id) === 0) await purgeWorkspace(ws.id, user.email)
   })
 
 // ── Members & invitations ────────────────────────────────────
@@ -1027,6 +1046,8 @@ export const getTrash = createServerFn({ method: 'GET' }).handler(async () => {
     trash_days: s.trash_days,
     purge_remote: Boolean(s.purge_remote),
     purge_local: Boolean(s.purge_local),
+    purge_remote_days: s.purge_remote_days,
+    purge_local_days: s.purge_local_days,
   }
 })
 
@@ -1058,6 +1079,7 @@ export const getPlatform = createServerFn({ method: 'GET' }).handler(async () =>
        FROM organization o LEFT JOIN workspace_settings s ON s.workspace_id = o.id ORDER BY o.name`,
     )
     .all() as { id: string; name: string; slug: string; logo: string | null; deleted_at: number | null; trash_days: number; members: number; instances: number }[]
+  const withPurge = workspaces.map((w) => ({ ...w, purge_at: w.deleted_at ? w.deleted_at + workspaceGraceDays(w.id) * 86_400_000 : null }))
   const users = db()
     .prepare(
       `SELECT u.id, u.name, u.email, u.role, (u.twoFactorEnabled OR EXISTS (SELECT 1 FROM passkey p WHERE p.userId = u.id)) AS two_factor, u.createdAt AS created_at,
@@ -1067,7 +1089,7 @@ export const getPlatform = createServerFn({ method: 'GET' }).handler(async () =>
     .all() as { id: string; name: string; email: string; role: string | null; two_factor: number; created_at: string; workspaces: number }[]
   const smtp = getSmtp()
   return {
-    workspaces,
+    workspaces: withPurge,
     users: users.map((u) => ({ ...u, isAdmin: u.role === 'admin', two_factor: Boolean(u.two_factor) })),
     smtp: smtp ? { ...smtp, pass: smtp.pass ? '••••••••' : '' } : null,
   }

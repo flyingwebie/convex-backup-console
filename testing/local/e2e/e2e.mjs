@@ -393,6 +393,59 @@ try {
   if (localFiles() !== localBefore || localBefore === '0') throw new Error(`Local copy should be kept (${localBefore} → ${localFiles()})`)
   ok(`deletion policy: remote on / local off — purge removed the R2 copy (${after} → ${final}) and kept the local copy`)
 
+  // Workspace colour theme: applied to <html> for every page and kept after a reload
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await page.getByRole('radio', { name: 'Violet' }).click()
+  await page.getByText('Violet theme applied').waitFor()
+  await page.reload()
+  await page.getByRole('radio', { name: 'Violet', checked: true }).waitFor()
+  if ((await page.evaluate(() => document.documentElement.dataset.theme)) !== 'violet') throw new Error('Theme not applied to <html>')
+  ok('workspace colour theme: Violet applied and kept after a reload')
+
+  // Delay: remote files are deleted N days after the purge — scheduled at the purge, deleted when due
+  await page.getByLabel('Delete the files after (days)').fill('3')
+  await page.getByRole('button', { name: 'Save policy' }).click()
+  await page.getByText('Deletion policy saved').waitFor()
+  await page.getByRole('switch', { name: /Local storage/ }).click()
+  await page.getByText('Deletion policy').first().scrollIntoViewIfNeeded()
+  await page.locator('form').filter({ hasText: 'Deletion policy' }).screenshot({ path: `${shots}24-deletion-delay.png` })
+  await page.locator('[role="radiogroup"]').screenshot({ path: `${shots}24-theme-picker.png` })
+  await page.getByRole('switch', { name: /Local storage/ }).click()
+  await page.getByRole('link', { name: 'Jobs' }).click()
+  await page.getByRole('button', { name: 'New job' }).first().click()
+  await dialog().getByLabel('Name').fill('purge-later')
+  await pick(dialog().getByRole('combobox').nth(1), 'Manual only')
+  await dialog().getByRole('button', { name: 'Create job' }).click()
+  await page.getByRole('cell', { name: /purge-later/ }).waitFor()
+  await page.getByRole('row', { name: /purge-later/ }).getByRole('button', { name: 'Run', exact: true }).click()
+  await page.getByText(/purge-later started/).waitFor()
+  let later = final
+  for (let i = 0; i < 40 && later === final; i++) { await page.waitForTimeout(3000); later = s3ls().length }
+  if (later !== final + 1) throw new Error(`Expected one new object in R2 (before ${final}, after ${later})`)
+  await page.getByRole('row', { name: /purge-later/ }).getByRole('button', { name: 'Actions' }).click()
+  await page.getByRole('menuitem', { name: 'Move to trash' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Move to trash' }).click()
+  await page.getByRole('link', { name: 'Trash' }).click()
+  await page.getByText(/deleted from remote storage 3 days after the purge/).waitFor()
+  await page.getByRole('button', { name: 'Delete now' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete permanently' }).click()
+  await page.getByText('Trash is empty').waitFor()
+  if (s3ls().length !== later) throw new Error('Backup file deleted at the purge despite a 3-day delay')
+  const pending = dbGet('SELECT COUNT(*) AS n, MIN(delete_after) AS at FROM run_copies WHERE delete_after IS NOT NULL AND deleted_at IS NULL')
+  if (pending.n !== 1 || Math.abs(pending.at - (Date.now() + 3 * 86_400_000)) > 3_600_000) throw new Error(`Expected one deletion due in 3 days, got ${JSON.stringify(pending)}`)
+  // Make it due and restart: the purge sweep runs at boot.
+  sql('UPDATE run_copies SET delete_after = 1 WHERE delete_after IS NOT NULL AND deleted_at IS NULL')
+  execSync(`docker restart ${CONTAINER}`)
+  for (let i = 0; i < 20; i++) {
+    const res = await page.goto(`${URL_}/`).catch(() => null)
+    if (res?.ok()) break
+    await page.waitForTimeout(1500)
+  }
+  let swept = later
+  for (let i = 0; i < 40 && swept === later; i++) { await page.waitForTimeout(3000); swept = s3ls().length }
+  if (swept !== final) throw new Error(`Due backup file not deleted (expected ${final}, found ${swept})`)
+  ok(`deletion policy delay: purge scheduled the R2 deletion for +3 days; deleted once due (${later} → ${swept})`)
+
   // Delete Acme → gone from switcher → restore from Platform
   await sidebar.getByRole('button').first().click()
   await page.getByRole('menuitem', { name: 'Acme Corp' }).click()
@@ -755,7 +808,7 @@ try {
   await page.keyboard.type('<script>alert(1)</script><p onclick="x()">Extra paragraph</p>')
   await frame.getByText('Extra paragraph').waitFor()
   await page.getByRole('button', { name: 'Save' }).click()
-  await page.getByText('Template saved').waitFor()
+  await page.getByText('Template saved').last().waitFor()
   const htmlRow = dbGet(`SELECT mode, content FROM email_templates WHERE workspace_id = '${wsId}' AND type = 'backup_failed'`)
   if (htmlRow.mode !== 'html' || /<script|onclick/.test(htmlRow.content) || !htmlRow.content.includes('Extra paragraph')) throw new Error(`HTML not sanitised: ${htmlRow.content.slice(0, 200)}`)
   await shot('31-email-html')
@@ -821,7 +874,7 @@ try {
   await page.getByRole('listitem').filter({ has: page.getByText('No recent backup', { exact: true }) }).getByRole('link', { name: 'Edit' }).click()
   await page.getByLabel('Subject').fill('⏰ Stale: {{ instance.name }}')
   await page.getByRole('button', { name: 'Save' }).click()
-  await page.getByText('Template saved').waitFor()
+  await page.getByText('Template saved').last().waitFor()
   if (!dbGet("SELECT content FROM email_templates WHERE workspace_id = '' AND type = 'backup_stale'")?.content.includes('Stale:')) throw new Error('Platform default not saved')
   const gh = page.getByRole('link', { name: 'Source code on GitHub' })
   if ((await gh.getAttribute('href')) !== 'https://github.com/flyingwebie/convex-backup-console') throw new Error('GitHub link wrong')

@@ -184,6 +184,12 @@ function migrate(conn: Database.Database) {
     conn.exec('UPDATE workspace_settings SET purge_remote = purge_backups, purge_local = purge_backups')
   }
   add('workspace_settings', 'api_enabled', 'INTEGER NOT NULL DEFAULT 1')
+  // Delay (days after an item is purged) before its backup files are deleted, per storage type;
+  // pending deletions are stamped on the copy. Workspace colour theme.
+  add('workspace_settings', 'purge_remote_days', 'INTEGER NOT NULL DEFAULT 0')
+  add('workspace_settings', 'purge_local_days', 'INTEGER NOT NULL DEFAULT 0')
+  add('run_copies', 'delete_after', 'INTEGER')
+  add('workspace_settings', 'theme', "TEXT NOT NULL DEFAULT 'neutral'")
   conn.exec(`CREATE TABLE IF NOT EXISTS api_tokens (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,

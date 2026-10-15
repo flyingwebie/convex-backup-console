@@ -5,7 +5,7 @@ Thanks for helping make Convex backups safer! Bug reports, docs fixes, templates
 ## Before you start
 
 - **Bugs:** open an issue with what you did, what you expected and what happened. Include the console version
-  (bottom of the sidebar, e.g. `v0.1.0 · 1a2b3c4`), your Convex version and whether it's self-hosted or Cloud.
+  (bottom of the sidebar, e.g. `v1.0.0-beta.1 · 1a2b3c4`), your Convex version and whether it's self-hosted or Cloud.
   Please redact URLs, keys and emails.
 - **Features:** open an issue first so we can agree on the approach before you spend time on it.
 - **Security issues:** never in public issues — see [SECURITY.md](SECURITY.md).
@@ -65,6 +65,7 @@ behaviour, and mention in the PR which suites you ran.
 
 Images are built for amd64 and arm64 by `.github/workflows/backup-console.yml` and published to
 `ghcr.io/flyingwebie/convex-backup-console` (`latest`, `sha-…` and `console-vX.Y.Z` tags). Bump `version` in
-`app/package.json` with each release.
+`app/package.json` with each release, add it to [`CHANGELOG.md`](CHANGELOG.md), then tag the merge commit
+`console-vX.Y.Z` (e.g. `console-v1.0.0-beta.1`) to publish the matching image tag.
 
 By contributing you agree that your contributions are licensed under the [MIT License](LICENSE).

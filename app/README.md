@@ -4,13 +4,15 @@ One shared console that backs up and restores **many** Convex deployments — **
 (deployed from [`convex-instance.coolify.yaml`](../convex-instance.coolify.yaml)) and **Convex Cloud** deployments — organised in **workspaces**. Design notes: [PLAN.md](PLAN.md).
 
 - **Workspaces:** e.g. one per client. Each has its own instances, destinations, jobs, alerts,
-  encryption key, members, logo, name, timezone, job defaults, backup-health threshold and deletion
+  encryption key, members, logo, name, colour theme, timezone, job defaults, backup-health threshold and deletion
   policy. Switch between them in the sidebar.
 - **Members & roles:** invite by link (and email when SMTP is set). Roles: Owner, Admin, Operator
   (run and download, no restore), Viewer (read-only). Platform admins create workspaces and manage users.
 - **Deletion policy & Trash:** deleted workspaces, instances, jobs and destinations stay restorable for
   N days (default 7), then are purged. Two separate toggles decide whether their backup files are also
-  deleted from **remote storage** (S3-compatible) and from **local storage** (volumes). Both are off by default.
+  deleted from **remote storage** (S3-compatible) and from **local storage** (volumes), each after its own
+  delay (days after the purge; 0 = at the purge). Both are off by default. Files under Object Lock are
+  deleted once the lock expires; turning a toggle off cancels its pending deletions.
 - **API switch:** API access and the GitHub Action can be turned off per workspace.
 
 - **Sources:** self-hosted Convex (URL + admin key) and **Convex Cloud** (deploy key; URL looked up automatically).

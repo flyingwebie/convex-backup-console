@@ -115,7 +115,7 @@ Not testable locally: real Google/GitHub/Microsoft logins, real R2/B2 Object Loc
 | Editor | Unknown variable shown as a warning and blocked on save; click-to-insert at the cursor; live preview (desktop 375 px mobile, plain text); test email arrives with an **inline PNG logo** (`cid:logo`, converted from the SVG) and a text part |
 | Full HTML | "Start from current design", `<script>` and `onclick` stripped on save, History → Revert |
 | Delivery | Digest to owners + the external address, with accent, footer and sender name; an Account opt-out stops it for that member only; invitation uses the template and links to `/invite/…` |
-| Platform | Default template edited by a platform admin; the sidebar shows `v0.1.0` and links to GitHub |
+| Platform | Default template edited by a platform admin; the sidebar shows `v1.0.0-beta.1` and links to GitHub |
 
 **Bug found and fixed:** an instance stayed "busy" until alerts, emails and retention had finished, after the run already showed as done. A second Run was rejected for a few seconds. The lock is now released as soon as the run's status is final, and it is scoped to its run id, so an old run can't release a newer run's lock.
 

@@ -56,10 +56,17 @@ export function describeRetention(j: { keep_last: number | null; keep_daily: num
   return parts.length ? parts.join(' · ') : 'Keep all'
 }
 
+type PurgePolicy = { purge_remote: boolean; purge_local: boolean; purge_remote_days: number; purge_local_days: number }
+
 /** One-line description of the workspace deletion policy for backup files. */
-export function purgeSummary(remote: boolean, local: boolean, subject = 'Their') {
-  if (remote && local) return `${subject} backup files are deleted from remote and local storage when purged.`
-  if (remote) return `${subject} backup files are deleted from remote storage when purged; local copies are kept.`
-  if (local) return `${subject} backup files are deleted from local storage when purged; remote copies are kept.`
+export function purgeSummary(p: PurgePolicy, subject = 'Their') {
+  const when = (days: number) => (days === 0 ? 'when purged' : `${days} day${days === 1 ? '' : 's'} after the purge`)
+  if (p.purge_remote && p.purge_local) {
+    return p.purge_remote_days === p.purge_local_days
+      ? `${subject} backup files are deleted from remote and local storage ${when(p.purge_remote_days)}.`
+      : `${subject} backup files are deleted from remote storage ${when(p.purge_remote_days)} and from local storage ${when(p.purge_local_days)}.`
+  }
+  if (p.purge_remote) return `${subject} backup files are deleted from remote storage ${when(p.purge_remote_days)}; local copies are kept.`
+  if (p.purge_local) return `${subject} backup files are deleted from local storage ${when(p.purge_local_days)}; remote copies are kept.`
   return `${subject} backup files are kept in remote and local storage.`
 }

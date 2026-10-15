@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Activity, Cloud, Copy, HardDrive, Download, Eye, EyeOff, ImageUp, KeyRound, Mail, Plus, RefreshCw, Send, ShieldAlert, Trash2, TriangleAlert, Webhook, X } from 'lucide-react'
+import { Activity, Check, Cloud, Copy, Palette, HardDrive, Download, Eye, EyeOff, ImageUp, KeyRound, Mail, Plus, RefreshCw, Send, ShieldAlert, Trash2, TriangleAlert, Webhook, X } from 'lucide-react'
 import { Badge } from '~/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { timeAgo } from '~/lib/format'
@@ -21,6 +21,8 @@ import { Textarea } from '~/components/ui/textarea'
 import { useAction } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
 import { purgeSummary } from '~/lib/format'
+import { cn } from '~/lib/utils'
+import { THEMES, THEME_LABELS, THEME_SWATCH, type Theme } from '~/lib/themes'
 import {
   setApiEnabled,
   createEncryption,
@@ -38,6 +40,7 @@ import {
   updateDeletionPolicy,
   updateWorkspaceDefaults,
   updateWorkspaceGeneral,
+  updateWorkspaceTheme,
 } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/workspace')({
@@ -62,6 +65,7 @@ function WorkspaceSettings() {
       <PageHeader title="Workspace settings" description={`Identity, defaults and policies for ${data.workspace.name}.`} />
       <PageBody>
         <GeneralCard data={data} editable={can('settings')} />
+        <AppearanceCard theme={data.settings.theme as Theme} editable={can('settings')} />
         <DefaultsCard data={data} editable={can('settings')} />
         <MonitoringCard data={data} editable={can('settings')} />
         {data.api && <ApiTokensCard api={data.api} />}
@@ -176,6 +180,56 @@ function GeneralCard({ data, editable }: { data: Data; editable: boolean }) {
   )
 }
 
+function AppearanceCard({ theme: initial, editable }: { theme: Theme; editable: boolean }) {
+  const save = useServerFn(updateWorkspaceTheme)
+  const router = useRouter()
+  const { run, pending } = useAction()
+  const [theme, setTheme] = useState(initial)
+  async function pick(next: Theme) {
+    if (next === theme) return
+    const previous = theme
+    setTheme(next)
+    document.documentElement.dataset.theme = next
+    const ok = await run(() => save({ data: { theme: next } }).then(() => true), { success: `${THEME_LABELS[next]} theme applied` })
+    if (ok) await router.invalidate()
+    else {
+      setTheme(previous)
+      document.documentElement.dataset.theme = previous
+    }
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Palette className="size-4" /> Appearance</CardTitle>
+        <CardDescription>The accent colour of this workspace, for every member. Light or dark mode is chosen per user from the sidebar menu.</CardDescription>
+      </CardHeader>
+      <CardContent className="py-6">
+        <div role="radiogroup" aria-label="Colour theme" className="flex flex-wrap gap-3">
+          {THEMES.map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="radio"
+              aria-checked={theme === t}
+              disabled={!editable || pending}
+              onClick={() => void pick(t)}
+              className={cn(
+                'flex w-24 flex-col items-center gap-2 rounded-md border p-3 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                theme === t ? 'border-primary ring-primary/30 ring-2' : 'hover:bg-muted',
+              )}
+            >
+              <span className="flex size-8 items-center justify-center rounded-full text-white" style={{ background: THEME_SWATCH[t] }}>
+                {theme === t && <Check className="size-4" />}
+              </span>
+              {THEME_LABELS[t]}
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function DefaultsCard({ data, editable }: { data: Data; editable: boolean }) {
   const save = useServerFn(updateWorkspaceDefaults)
   const { run, pending } = useAction()
@@ -261,12 +315,27 @@ function DeletionCard({ data, editable }: { data: Data; editable: boolean }) {
   const [trashDays, setTrashDays] = useState(String(data.settings.trash_days))
   const [purgeRemote, setPurgeRemote] = useState(data.settings.purge_remote)
   const [purgeLocal, setPurgeLocal] = useState(data.settings.purge_local)
+  const [remoteDays, setRemoteDays] = useState(String(data.settings.purge_remote_days))
+  const [localDays, setLocalDays] = useState(String(data.settings.purge_local_days))
+  const immediate = (purgeRemote && Number(remoteDays) === 0) || (purgeLocal && Number(localDays) === 0)
+  const delayField = (id: string, value: string, set: (v: string) => void) => (
+    <Field className="border-t pt-3">
+      <FieldLabel htmlFor={id}>Delete the files after (days)</FieldLabel>
+      <Input id={id} type="number" min={0} max={365} className="w-32" value={value} disabled={!editable} onChange={(e) => set(e.target.value)} />
+      <FieldDescription>
+        Counted from when the item is purged from the Trash
+        {Number(trashDays) > 0 && Number(value) > 0 ? ` — ${Number(trashDays) + Number(value)} days after it was deleted` : ''}. 0 deletes them at the purge.
+      </FieldDescription>
+    </Field>
+  )
   return (
     <Card>
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          void run(() => save({ data: { trashDays: Number(trashDays), purgeRemote, purgeLocal } }), { success: 'Deletion policy saved' })
+          void run(() => save({
+                data: { trashDays: Number(trashDays), purgeRemote, purgeLocal, purgeRemoteDays: Number(remoteDays), purgeLocalDays: Number(localDays) },
+              }), { success: 'Deletion policy saved' })
         }}
       >
         <CardHeader>
@@ -283,30 +352,37 @@ function DeletionCard({ data, editable }: { data: Data; editable: boolean }) {
             <div className="space-y-1">
               <div className="text-sm font-medium">Delete their backup files when purged</div>
               <p className="text-muted-foreground text-sm">
-                Off (recommended): backups stay after the instance or job is gone, so you can still recover. On: they're deleted when the grace period
-                ends. Files under Object Lock are skipped until their lock expires; files in a deleted destination are never touched.
+                Off (recommended): backups stay after the instance or job is gone, so you can still recover. On: they're deleted after the number
+                of days you set. Files under Object Lock are deleted once their lock expires; files in a deleted destination are never touched.
               </p>
             </div>
-            <Field orientation="horizontal" className="rounded-md border p-3">
-              <FieldContent>
-                <FieldLabel htmlFor="purge-remote" className="flex items-center gap-2"><Cloud className="size-4" /> Remote storage</FieldLabel>
-                <FieldDescription>S3-compatible destinations: Cloudflare R2, AWS S3, Backblaze B2, MinIO…</FieldDescription>
-              </FieldContent>
-              <Switch id="purge-remote" checked={purgeRemote} disabled={!editable} onCheckedChange={setPurgeRemote} />
-            </Field>
-            <Field orientation="horizontal" className="rounded-md border p-3">
-              <FieldContent>
-                <FieldLabel htmlFor="purge-local" className="flex items-center gap-2"><HardDrive className="size-4" /> Local storage</FieldLabel>
-                <FieldDescription>Local-volume destinations on the console's server.</FieldDescription>
-              </FieldContent>
-              <Switch id="purge-local" checked={purgeLocal} disabled={!editable} onCheckedChange={setPurgeLocal} />
-            </Field>
-            {(purgeRemote || purgeLocal) && Number(trashDays) === 0 && (
+            <div className="space-y-3 rounded-md border p-3">
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel htmlFor="purge-remote" className="flex items-center gap-2"><Cloud className="size-4" /> Remote storage</FieldLabel>
+                  <FieldDescription>S3-compatible destinations: Cloudflare R2, AWS S3, Backblaze B2, MinIO…</FieldDescription>
+                </FieldContent>
+                <Switch id="purge-remote" checked={purgeRemote} disabled={!editable} onCheckedChange={setPurgeRemote} />
+              </Field>
+              {purgeRemote && delayField('purge-remote-days', remoteDays, setRemoteDays)}
+            </div>
+            <div className="space-y-3 rounded-md border p-3">
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel htmlFor="purge-local" className="flex items-center gap-2"><HardDrive className="size-4" /> Local storage</FieldLabel>
+                  <FieldDescription>Local-volume destinations on the console's server.</FieldDescription>
+                </FieldContent>
+                <Switch id="purge-local" checked={purgeLocal} disabled={!editable} onCheckedChange={setPurgeLocal} />
+              </Field>
+              {purgeLocal && delayField('purge-local-days', localDays, setLocalDays)}
+            </div>
+            {immediate && Number(trashDays) === 0 && (
               <Alert variant="destructive">
                 <TriangleAlert />
                 <AlertTitle>No safety net</AlertTitle>
                 <AlertDescription>
-                  Deleting an instance will immediately and permanently delete its backups from {purgeRemote && purgeLocal ? 'all' : purgeRemote ? 'remote' : 'local'} storage.
+                  Deleting an instance will immediately and permanently delete its backups from{' '}
+                  {[purgeRemote && Number(remoteDays) === 0 && 'remote', purgeLocal && Number(localDays) === 0 && 'local'].filter(Boolean).join(' and ')} storage.
                 </AlertDescription>
               </Alert>
             )}
@@ -402,7 +478,7 @@ function DangerCard({ data }: { data: Data }) {
   const { run, pending } = useAction()
   const [open, setOpen] = useState(false)
   const [confirm, setConfirm] = useState('')
-  const days = data.settings.trash_days
+  const days = data.settings.grace_days
   return (
     <Card className="border-destructive/40">
       <CardHeader>
@@ -410,7 +486,7 @@ function DangerCard({ data }: { data: Data }) {
         <CardDescription>
           Deleting the workspace stops all its schedules and hides it from every member.{' '}
           {days > 0 ? `A platform admin can restore it for ${days} day${days === 1 ? '' : 's'}; then it's purged.` : 'It is purged immediately.'}{' '}
-          {purgeSummary(data.settings.purge_remote, data.settings.purge_local, 'Its')}
+          {purgeSummary(data.settings, 'Its')}
         </CardDescription>
       </CardHeader>
       <CardFooter>
