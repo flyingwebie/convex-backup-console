@@ -90,6 +90,7 @@ export const getAppContext = createServerFn({ method: 'GET' }).handler(async () 
   return {
     user: ctx.user,
     onboarding: ctx.user.isPlatformAdmin && onboardingState() === 'pending',
+    tourSeen: Boolean(db().prepare('SELECT tour_seen_at FROM user_prefs WHERE user_id = ? AND tour_seen_at IS NOT NULL').get(ctx.user.id)),
     workspaces: ctx.workspaces,
     active: ctx.active,
     settings: settings && {
@@ -100,6 +101,15 @@ export const getAppContext = createServerFn({ method: 'GET' }).handler(async () 
       encryption: Boolean(settings.age_recipient),
     },
   }
+})
+
+/** The product tour starts by itself until the user finishes or closes it once. */
+export const markTourSeen = createServerFn({ method: 'POST' }).handler(async () => {
+  const ctx = await resolveContext()
+  if (!ctx) throw new Error('Unauthorized')
+  db()
+    .prepare('INSERT INTO user_prefs (user_id, tour_seen_at) VALUES (?, ?) ON CONFLICT (user_id) DO UPDATE SET tour_seen_at = excluded.tour_seen_at')
+    .run(ctx.user.id, Date.now())
 })
 
 export const switchWorkspace = createServerFn({ method: 'POST' })

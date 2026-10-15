@@ -54,6 +54,9 @@ await page.getByRole('button', { name: 'Continue' }).click()
 const secret = (await page.locator('p code').first().textContent()).trim()
 await page.locator('[data-input-otp]').first().fill(totp(secret))
 await page.waitForURL(`${URL_}/`)
+// First visit starts the product tour; close it (marks it seen) so it stays out of the screenshots.
+await page.locator('.driver-popover').waitFor()
+await page.keyboard.press('Escape')
 
 // Seed demo data, then logo
 execSync(`docker exec -i -e MASTER_KEY=${MASTER} cbc-demo node -`, { input: fs.readFileSync(new URL('./seed-demo.cjs', import.meta.url)) , stdio: ['pipe', 'inherit', 'inherit'] })

@@ -125,10 +125,12 @@ try {
   await page.getByRole('button', { name: 'Finish' }).click()
   await page.waitForURL(`${URL_}/`)
   await page.getByRole('heading', { name: 'Overview' }).first().waitFor()
+  await page.locator('.driver-popover').getByText('Welcome to Convex Backup Console').waitFor()
+  await page.keyboard.press('Escape')
   if (dbGet("SELECT value FROM settings WHERE key = 'onboarding'").value !== 'done') throw new Error('Onboarding not marked done')
   await page.goto(`${URL_}/setup`)
   await page.waitForURL(`${URL_}/`)
-  ok('finished → Overview; /setup now redirects home')
+  ok('finished → Overview with the product tour; /setup now redirects home')
 
   console.log(`\nAll ${step} onboarding checks passed.`)
 } catch (err) {
