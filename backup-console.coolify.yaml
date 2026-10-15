@@ -1,0 +1,47 @@
+# documentation: https://github.com/flyingwebie/convex-backup-console
+# slogan: Backup, restore and disaster-recovery console for self-hosted Convex and Convex Cloud — encrypted, scheduled, multi-workspace.
+# category: backup
+# tags: convex, backup, restore, disaster-recovery, s3, r2, age, encryption, 2fa
+# logo: svgs/convex-backup-console.svg
+# port: 3000
+
+services:
+  console:
+    image: ghcr.io/flyingwebie/convex-backup-console:${CONSOLE_VERSION:-latest}
+    environment:
+      - SERVICE_URL_CONSOLE_3000
+      - PUBLIC_URL=${SERVICE_URL_CONSOLE}
+      # Encrypts stored admin/deploy keys, S3 secrets and age keys. Back it up!
+      - BACKUP_MASTER_KEY=${SERVICE_PASSWORD_64_MASTERKEY}
+      - BETTER_AUTH_SECRET=${SERVICE_PASSWORD_64_AUTHSECRET}
+      # First run: open the console URL. It asks for a one-time setup code printed in this
+      # service's logs, then walks you through the admin account, 2FA, workspace and team.
+      # Optional: fix the code yourself instead of reading it from the logs.
+      - SETUP_CODE=${SETUP_CODE:-}
+      # Optional sign-in providers — each is enabled when both values are set.
+      # Callback URL: <console URL>/api/auth/callback/{google|github|microsoft}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID:-}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET:-}
+      - MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID:-common}
+    volumes:
+      - convex-backup-console-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  convex-backup-console-data:

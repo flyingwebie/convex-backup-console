@@ -1,0 +1,77 @@
+name: Convex backup
+description: Run a Convex Backup Console job (e.g. right before `npx convex deploy`) and wait for it to finish.
+branding:
+  icon: life-buoy
+  color: blue
+inputs:
+  console-url:
+    description: Base URL of the backup console, e.g. https://backups.example.com
+    required: true
+  token:
+    description: API token with the "run" scope (store it as a secret)
+    required: true
+  job-id:
+    description: ID of the job to run (Workspace settings → API tokens lists them)
+    required: true
+  timeout-minutes:
+    description: Fail if the backup hasn't finished after this many minutes
+    required: false
+    default: "30"
+  allow-partial:
+    description: Treat "partial" (some destinations failed) as success
+    required: false
+    default: "false"
+  fail-when-disabled:
+    description: Fail instead of skipping when API access is turned off in the console (Workspace settings → API tokens)
+    required: false
+    default: "false"
+outputs:
+  run-id:
+    description: ID of the backup run
+    value: ${{ steps.backup.outputs.run-id }}
+  status:
+    description: Final status (ok, partial, failed, or skipped when API access is turned off)
+    value: ${{ steps.backup.outputs.status }}
+runs:
+  using: composite
+  steps:
+    - id: backup
+      shell: bash
+      env:
+        CONSOLE: ${{ inputs.console-url }}
+        TOKEN: ${{ inputs.token }}
+        JOB: ${{ inputs.job-id }}
+        TIMEOUT: ${{ inputs.timeout-minutes }}
+        ALLOW_PARTIAL: ${{ inputs.allow-partial }}
+        FAIL_WHEN_DISABLED: ${{ inputs.fail-when-disabled }}
+      run: |
+        set -euo pipefail
+        api() { curl -sS --fail-with-body -H "Authorization: Bearer $TOKEN" "$@"; }
+        resp=$(mktemp)
+        code=$(curl -sS -o "$resp" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" "${CONSOLE%/}/api/v1/jobs/$JOB/run")
+        if [ "$code" = "403" ] && grep -q "disabled" "$resp"; then
+          echo "status=skipped" >> "$GITHUB_OUTPUT"
+          if [ "${FAIL_WHEN_DISABLED:-false}" = "true" ]; then echo "::error::API access is disabled in the backup console"; exit 1; fi
+          echo "::warning::Backup skipped: API access is disabled in the backup console (Workspace settings → API tokens)"
+          exit 0
+        fi
+        if [ "${code:0:1}" != "2" ]; then echo "::error::Could not start the backup (HTTP $code): $(cat "$resp")"; exit 1; fi
+        run=$(cat "$resp")
+        id=$(jq -r .runId <<<"$run")
+        echo "run-id=$id" >> "$GITHUB_OUTPUT"
+        echo "Backup started: run $id"
+        deadline=$(( $(date +%s) + TIMEOUT * 60 ))
+        while :; do
+          status=$(api "${CONSOLE%/}/api/v1/runs/$id" | jq -r .status)
+          [ "$status" != "running" ] && break
+          if [ "$(date +%s)" -ge "$deadline" ]; then echo "::error::Backup did not finish within $TIMEOUT minutes"; exit 1; fi
+          sleep 10
+        done
+        echo "status=$status" >> "$GITHUB_OUTPUT"
+        details=$(api "${CONSOLE%/}/api/v1/runs/$id")
+        echo "$details" | jq '{status, bytes, sha256, error, copies}'
+        case "$status" in
+          ok) echo "✅ Backup completed" ;;
+          partial) if [ "${ALLOW_PARTIAL:-false}" = "true" ]; then echo "::warning::Backup partially failed"; else echo "::error::Backup partially failed"; exit 1; fi ;;
+          *) echo "::error::Backup failed: $(jq -r .error <<<"$details")"; exit 1 ;;
+        esac

@@ -85,7 +85,7 @@ services:
   # Convex backend
   # ──────────────────────────────────────────────────────────────
   backend:
-    image: ghcr.io/get-convex/convex-backend:precompiled-2026-08-29-1733af0
+    image: ghcr.io/get-convex/convex-backend:${CONVEX_VERSION:-latest}
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,6 +113,10 @@ services:
       # IMPORTANT: no database name in the URL — Convex derives it
       # from INSTANCE_NAME (dashes become underscores).
       - POSTGRES_URL=postgresql://${SERVICE_USER_POSTGRES}:${SERVICE_PASSWORD_POSTGRES}@postgres:5432
+      # Purge expired snapshot exports from the exports bucket on the next cleanup pass
+      # (Convex's default keeps them 30 more days). The backup console expires each export
+      # once it holds a copy, so exports don't pile up in RustFS.
+      - MAX_EXPIRED_SNAPSHOT_AGE_DAYS=${MAX_EXPIRED_SNAPSHOT_AGE_DAYS:-0}
       - RUST_LOG=${RUST_LOG:-info}
       - RUST_BACKTRACE=${RUST_BACKTRACE:-}
       # ── S3 storage on RustFS ──
@@ -137,7 +141,7 @@ services:
   # Convex dashboard
   # ──────────────────────────────────────────────────────────────
   dashboard:
-    image: ghcr.io/get-convex/convex-dashboard:precompiled-2026-08-29-1733af0
+    image: ghcr.io/get-convex/convex-dashboard:${CONVEX_VERSION:-latest}
     environment:
       - SERVICE_URL_DASHBOARD_6791
       # URL of the Convex API as accessed by the dashboard (browser).

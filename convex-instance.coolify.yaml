@@ -1,0 +1,155 @@
+# documentation: https://docs.convex.dev/self-hosting
+# slogan: Self-hosted Convex — the reactive backend — on Postgres with S3-compatible file storage (RustFS). Pairs with Convex Backup Console.
+# category: backend
+# tags: convex, database, reactive, backend, postgres, s3, rustfs
+# logo: svgs/convex.svg
+# port: 6791
+#
+# Back it up with the Convex Backup Console template: add this instance with its API URL
+# and an admin key (backend terminal → ./generate_admin_key.sh).
+
+services:
+  # ──────────────────────────────────────────────────────────────
+  # PostgreSQL — Convex system-of-record (replaces embedded SQLite)
+  # ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_USER=${SERVICE_USER_POSTGRES}
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
+      # Convex creates its own database named after INSTANCE_NAME
+      # (dashes replaced with underscores), so we pre-create it here.
+      - POSTGRES_DB=${CONVEX_DB_NAME:-self_hosted_convex}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ──────────────────────────────────────────────────────────────
+  # RustFS — S3-compatible object storage for Convex file storage,
+  # exports, modules and search indexes
+  # ──────────────────────────────────────────────────────────────
+  rustfs:
+    image: rustfs/rustfs:1.0.0-rc.4
+    command: /data
+    environment:
+      - SERVICE_URL_RUSTFS_9000
+      - SERVICE_URL_CONSOLE_9001
+      - RUSTFS_ADDRESS=${RUSTFS_ADDRESS:-0.0.0.0:9000}
+      - RUSTFS_CONSOLE_ADDRESS=${RUSTFS_CONSOLE_ADDRESS:-0.0.0.0:9001}
+      - RUSTFS_ACCESS_KEY=${SERVICE_USER_RUSTFS}
+      - RUSTFS_SECRET_KEY=${SERVICE_PASSWORD_RUSTFS}
+      - RUSTFS_CONSOLE_ENABLE=${RUSTFS_CONSOLE_ENABLE:-true}
+      - RUSTFS_CORS_ALLOWED_ORIGINS=${RUSTFS_CORS_ALLOWED_ORIGINS:-*}
+      - RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS=${RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS:-*}
+    volumes:
+      - rustfs-data:/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -f http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 20s
+      retries: 10
+
+  # ──────────────────────────────────────────────────────────────
+  # One-shot init job — creates the 5 buckets Convex needs in RustFS
+  # ──────────────────────────────────────────────────────────────
+  rustfs-init:
+    image: amazon/aws-cli:2.36.34
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      - AWS_ACCESS_KEY_ID=${SERVICE_USER_RUSTFS}
+      - AWS_SECRET_ACCESS_KEY=${SERVICE_PASSWORD_RUSTFS}
+      - AWS_REGION=${RUSTFS_REGION:-us-east-1}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        for b in convex-snapshot-exports convex-snapshot-imports convex-modules convex-user-files convex-search-indexes; do
+          aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket $$b 2>/dev/null || true
+          echo "bucket $$b ready"
+        done
+
+  # ──────────────────────────────────────────────────────────────
+  # Convex backend
+  # ──────────────────────────────────────────────────────────────
+  backend:
+    image: ghcr.io/get-convex/convex-backend:${CONVEX_VERSION:-latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    volumes:
+      - convex-data:/convex/data
+    environment:
+      - SERVICE_URL_BACKEND_3210
+      - SERVICE_URL_SITE_3211
+      - INSTANCE_NAME=${INSTANCE_NAME:-self-hosted-convex}
+      - INSTANCE_SECRET=${SERVICE_HEX_64_SECRET}
+      - CONVEX_RELEASE_VERSION_DEV=${CONVEX_RELEASE_VERSION_DEV:-}
+      - ACTIONS_USER_TIMEOUT_SECS=${ACTIONS_USER_TIMEOUT_SECS:-}
+      # URL of the Convex API as accessed by the client/frontend.
+      - CONVEX_CLOUD_ORIGIN=${SERVICE_URL_BACKEND}
+      # URL of Convex HTTP actions as accessed by the client/frontend.
+      - CONVEX_SITE_ORIGIN=${SERVICE_URL_SITE}
+      - DISABLE_BEACON=${DISABLE_BEACON:-true}
+      - REDACT_LOGS_TO_CLIENT=${REDACT_LOGS_TO_CLIENT:-false}
+      # Postgres is on the internal Docker network -> no SSL needed.
+      - DO_NOT_REQUIRE_SSL=${DO_NOT_REQUIRE_SSL:-true}
+      # IMPORTANT: no database name in the URL — Convex derives it
+      # from INSTANCE_NAME (dashes become underscores).
+      - POSTGRES_URL=postgresql://${SERVICE_USER_POSTGRES}:${SERVICE_PASSWORD_POSTGRES}@postgres:5432
+      # Purge expired snapshot exports from the exports bucket on the next cleanup pass
+      # (Convex's default keeps them 30 more days). The backup console expires each export
+      # once it holds a copy, so exports don't pile up in RustFS.
+      - MAX_EXPIRED_SNAPSHOT_AGE_DAYS=${MAX_EXPIRED_SNAPSHOT_AGE_DAYS:-0}
+      - RUST_LOG=${RUST_LOG:-info}
+      - RUST_BACKTRACE=${RUST_BACKTRACE:-}
+      # ── S3 storage on RustFS ──
+      - AWS_REGION=${RUSTFS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${SERVICE_USER_RUSTFS}
+      - AWS_SECRET_ACCESS_KEY=${SERVICE_PASSWORD_RUSTFS}
+      - AWS_S3_FORCE_PATH_STYLE=${AWS_S3_FORCE_PATH_STYLE:-true}
+      - AWS_S3_DISABLE_SSE=${AWS_S3_DISABLE_SSE:-true}
+      - AWS_S3_DISABLE_CHECKSUMS=${AWS_S3_DISABLE_CHECKSUMS:-true}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://rustfs:9000}
+      - S3_STORAGE_EXPORTS_BUCKET=${S3_STORAGE_EXPORTS_BUCKET:-convex-snapshot-exports}
+      - S3_STORAGE_SNAPSHOT_IMPORTS_BUCKET=${S3_STORAGE_SNAPSHOT_IMPORTS_BUCKET:-convex-snapshot-imports}
+      - S3_STORAGE_MODULES_BUCKET=${S3_STORAGE_MODULES_BUCKET:-convex-modules}
+      - S3_STORAGE_FILES_BUCKET=${S3_STORAGE_FILES_BUCKET:-convex-user-files}
+      - S3_STORAGE_SEARCH_BUCKET=${S3_STORAGE_SEARCH_BUCKET:-convex-search-indexes}
+    healthcheck:
+      test: curl -f http://127.0.0.1:3210/version
+      interval: 5s
+      start_period: 10s
+
+  # ──────────────────────────────────────────────────────────────
+  # Convex dashboard
+  # ──────────────────────────────────────────────────────────────
+  dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:${CONVEX_VERSION:-latest}
+    environment:
+      - SERVICE_URL_DASHBOARD_6791
+      # URL of the Convex API as accessed by the dashboard (browser).
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${SERVICE_URL_BACKEND}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: curl -f http://127.0.0.1:6791/
+      interval: 5s
+      start_period: 5s
+
+
+volumes:
+  postgres-data:
+  rustfs-data:
+  convex-data:

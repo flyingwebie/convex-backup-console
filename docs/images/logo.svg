@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Convex Backup Console">
+  <defs>
+    <linearGradient id="cbc-bg" x1="8" y1="2" x2="56" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C7FF7"/>
+      <stop offset=".5" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#2E2A85"/>
+    </linearGradient>
+    <linearGradient id="cbc-shine" x1="32" y1="0" x2="32" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity=".25"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#cbc-bg)"/>
+  <rect width="64" height="64" rx="15" fill="url(#cbc-shine)"/>
+  <path d="M15.04 21.40A20 20 0 1 1 14.68 42.00" fill="none" stroke="#fff" stroke-width="4.4" stroke-linecap="round"/>
+  <path d="M11.89 26.45L11.64 16.27L21.14 22.21Z" fill="#fff" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>
+  <ellipse cx="32" cy="22.6" rx="8.5" ry="3.4" fill="#fff"/>
+  <path d="M23.5 22.6A8.5 3.4 0 0 0 40.5 22.6V27.3A8.5 3.4 0 0 1 23.5 27.3Z" fill="#fff" fill-opacity=".8"/>
+  <path d="M23.5 28.8A8.5 3.4 0 0 0 40.5 28.8V33.5A8.5 3.4 0 0 1 23.5 33.5Z" fill="#FBBF24"/>
+  <path d="M23.5 35.0A8.5 3.4 0 0 0 40.5 35.0V41.2A8.5 3.4 0 0 1 23.5 41.2Z" fill="#fff"/>
+</svg>
