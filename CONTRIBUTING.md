@@ -17,6 +17,7 @@ Thanks for helping make Convex backups safer! Bug reports, docs fixes, templates
 | `app/` | The console: TanStack Start (React 19, Vite), Better Auth, SQLite (better-sqlite3), React Email, shadcn/ui |
 | `backup-console.coolify.yaml` | Coolify template for the console |
 | `convex-instance.coolify.yaml` | Coolify template for a self-hosted Convex instance |
+| `render.yaml`, `app/railway.json`, `app/fly.toml` | One-click / config-as-code deploys ([docs/deploy.md](docs/deploy.md)) |
 | `.github/actions/convex-backup` | GitHub Action that triggers a backup before `npx convex deploy` |
 | `docs/` | Guides and images |
 | `testing/` | Local Docker kit and Playwright end-to-end tests |

@@ -16,7 +16,13 @@ Plus a production-ready **Convex-on-Coolify** template to run the instances them
 [![TypeScript](https://img.shields.io/badge/TypeScript-TanStack%20Start-3178C6?logo=typescript&logoColor=white)](app)
 [![e2e](https://img.shields.io/badge/e2e-53%20checks-2ea44f)](testing/TESTING.md)
 
-[Quick start](#-quick-start) · [Features](#-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Security](#-security) · [FAQ](#-faq)
+<a href="docs/coolify.md"><img src="https://img.shields.io/badge/Deploy%20on-Coolify-8C52FF?style=for-the-badge&logo=coolify&logoColor=white" alt="Deploy on Coolify" height="32"></a>
+<a href="https://render.com/deploy?repo=https://github.com/flyingwebie/convex-backup-console"><img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render" height="32"></a>
+<a href="docs/deploy.md#railway"><img src="https://railway.com/button.svg" alt="Deploy on Railway" height="32"></a>
+<a href="docs/deploy.md#flyio"><img src="https://img.shields.io/badge/Deploy%20on-Fly.io-7B3BE2?style=for-the-badge&logo=flydotio&logoColor=white" alt="Deploy on Fly.io" height="32"></a>
+<a href="docs/deploy.md#docker"><img src="https://img.shields.io/badge/Run%20with-Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Run with Docker" height="32"></a>
+
+[Quick start](#-quick-start) · [Deploy anywhere](docs/deploy.md) · [Features](#-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Security](#-security) · [FAQ](#-faq)
 
 <img src="docs/images/hero.png" alt="Convex Backup Console" width="100%" />
 
@@ -91,6 +97,18 @@ Convex Backup Console does all of that in a single container.
 > **Save `SERVICE_PASSWORD_64_MASTERKEY` in your password manager.** It encrypts every stored key and secret.
 
 Full guide, including OAuth setup: [`docs/coolify.md`](docs/coolify.md).
+
+### Render, Railway, Fly.io
+
+| | |
+|---|---|
+| [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/flyingwebie/convex-backup-console) | One click from [`render.yaml`](render.yaml): disk, health check and generated secrets (paid instance for the disk). |
+| [![Deploy on Railway](https://railway.com/button.svg)](docs/deploy.md#railway) | Deploy the repo with root directory `/app`, add a volume at `/data` and two secrets. |
+| **Fly.io** | `cd app && fly launch --copy-config` with the included [`fly.toml`](app/fly.toml) ([steps](docs/deploy.md#flyio)). |
+
+**Not Vercel/Netlify:** the console needs an always-on process (for schedules) and a persistent disk (for its
+database), which serverless platforms don't provide. See [`docs/deploy.md`](docs/deploy.md) for requirements and
+every platform.
 
 ### Any Docker host
 
@@ -211,6 +229,7 @@ Convex Cloud's own backups are excellent, so keep them on. This adds independent
 ```
 app/                            The console: TanStack Start · Better Auth · SQLite · React Email · shadcn/ui
 backup-console.coolify.yaml     Coolify template: the console (deploy once)
+render.yaml                     Render Blueprint (Deploy to Render button); app/railway.json, app/fly.toml for Railway / Fly.io
 convex-instance.coolify.yaml    Coolify template: a self-hosted Convex instance (Postgres + RustFS), one per project
 docs/                           Guides (Coolify, Convex on Coolify, GitHub Action), images
 testing/                        Local Docker kit, Playwright e2e (45 + 8 onboarding checks), demo data

@@ -20,6 +20,8 @@ services:
   app:
     image: ghcr.io/flyingwebie/convex-backup-console:${CONSOLE_VERSION:-latest}
     restart: unless-stopped
+    # Runs unprivileged; the image only needs root to fix volume ownership on PaaS hosts.
+    user: node
     read_only: true
     security_opt:
       - no-new-privileges:true

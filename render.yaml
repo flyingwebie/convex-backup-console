@@ -1,0 +1,26 @@
+# Render Blueprint — powers the "Deploy to Render" button in the README.
+# A persistent disk needs a paid instance type (Starter or above). Keep one instance: SQLite + the scheduler.
+services:
+  - type: web
+    name: convex-backup-console
+    runtime: docker
+    dockerfilePath: ./app/Dockerfile
+    dockerContext: ./app
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeploy: false
+    buildFilter:
+      paths: ["app/**"]
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      # PUBLIC_URL defaults to the service's onrender.com URL; set it when you add a custom domain.
+      - key: BACKUP_MASTER_KEY
+        generateValue: true
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      # Optional: choose the first-run setup code yourself (otherwise it's printed in the logs).
+      - key: SETUP_CODE
+        sync: false

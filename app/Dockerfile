@@ -15,9 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini curl && rm
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server.mjs /app/package.json ./
-USER node
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 VOLUME /data
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD curl -fsS http://127.0.0.1:3000/api/health || exit 1
-ENTRYPOINT ["tini", "--"]
+ENTRYPOINT ["tini", "--", "docker-entrypoint.sh"]
 CMD ["node", "server.mjs"]

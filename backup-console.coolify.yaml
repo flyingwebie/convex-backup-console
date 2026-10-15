@@ -29,6 +29,8 @@ services:
       - MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID:-common}
     volumes:
       - convex-backup-console-data:/data
+    # Runs unprivileged; the image only needs root to fix volume ownership on PaaS hosts.
+    user: node
     read_only: true
     tmpfs:
       - /tmp:size=64m

@@ -12,9 +12,18 @@ function pair(idVar: string, secretVar: string) {
   return clientId && clientSecret ? { clientId, clientSecret } : null
 }
 
+/** Public URL provided by hosting platforms, so one-click deploys work without setting PUBLIC_URL. */
+function platformUrl() {
+  const { RENDER_EXTERNAL_URL, RAILWAY_PUBLIC_DOMAIN, FLY_APP_NAME } = process.env
+  if (RENDER_EXTERNAL_URL) return RENDER_EXTERNAL_URL
+  if (RAILWAY_PUBLIC_DOMAIN) return `https://${RAILWAY_PUBLIC_DOMAIN}`
+  if (FLY_APP_NAME) return `https://${FLY_APP_NAME}.fly.dev`
+  return null
+}
+
 export const env = {
   dataDir: process.env.DATA_DIR ?? path.resolve('data'),
-  publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
+  publicUrl: (process.env.PUBLIC_URL || platformUrl() || 'http://localhost:3000').replace(/\/+$/, ''),
   get masterKey() {
     return required('BACKUP_MASTER_KEY')
   },
