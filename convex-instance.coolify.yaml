@@ -79,7 +79,7 @@ services:
   # Convex backend
   # ──────────────────────────────────────────────────────────────
   backend:
-    image: ghcr.io/get-convex/convex-backend:${CONVEX_VERSION:-latest}
+    image: ghcr.io/convex/convex-backend:${CONVEX_VERSION:-latest}
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,7 +135,7 @@ services:
   # Convex dashboard
   # ──────────────────────────────────────────────────────────────
   dashboard:
-    image: ghcr.io/get-convex/convex-dashboard:${CONVEX_VERSION:-latest}
+    image: ghcr.io/convex/convex-dashboard:${CONVEX_VERSION:-latest}
     environment:
       - SERVICE_URL_DASHBOARD_6791
       # URL of the Convex API as accessed by the dashboard (browser).
