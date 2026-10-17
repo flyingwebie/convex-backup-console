@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Activity, Download, EyeOff, FileLock2, ListTree, Lock, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { Activity, ArrowDown, ArrowUp, ArrowUpDown, Download, EyeOff, FileLock2, ListTree, Lock, MoreHorizontal, RotateCcw, Search, Trash2, TriangleAlert, X } from 'lucide-react'
 import { RunContents } from '~/components/run-contents'
 import { Checkbox } from '~/components/ui/checkbox'
 import { Switch } from '~/components/ui/switch'
@@ -8,7 +8,7 @@ import { FieldContent } from '~/components/ui/field'
 import { getRunContents, getScrubRules } from '~/server/fns'
 import { useServerFn as useFn } from '@tanstack/react-start'
 import { useEffect } from 'react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { z } from 'zod'
 import { PageBody, PageHeader } from '~/components/page'
 import { StatusBadge } from '~/components/status'
@@ -28,17 +28,36 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip
 import { duration, formatBytes, formatDate, timeAgo } from '~/lib/format'
 import { useAction, usePolling } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
-import { getRuns, restoreBackup, type RunView } from '~/server/fns'
+import { deleteRun, getRuns, restoreBackup, type RunView } from '~/server/fns'
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '~/components/ui/alert-dialog'
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export const Route = createFileRoute('/_app/runs')({
-  validateSearch: z.object({ job: z.string().optional(), tab: z.enum(['backups', 'restores']).optional() }),
-  loaderDeps: ({ search }) => ({ job: search.job }),
-  loader: ({ deps }) => getRuns({ data: { jobId: deps.job } }),
+  validateSearch: z.object({
+    job: z.string().optional(),
+    tab: z.enum(['backups', 'restores']).optional(),
+    from: z.string().regex(DAY_RE).optional().catch(undefined),
+    to: z.string().regex(DAY_RE).optional().catch(undefined),
+  }),
+  loaderDeps: ({ search }) => ({ job: search.job, from: search.from, to: search.to }),
+  loader: ({ deps }) => getRuns({ data: { jobId: deps.job, from: deps.from, to: deps.to } }),
   component: Runs,
 })
 
 type Data = Awaited<ReturnType<typeof getRuns>>
 type Source = { run: RunView; destinationId: string; key: string }
+type SortKey = 'started' | 'instance' | 'status' | 'size'
+type Sort = { key: SortKey; dir: 'asc' | 'desc' }
+
+const STATUSES = { ok: 'Succeeded', partial: 'Partial', failed: 'Failed', running: 'Running' } as const
+const STATUS_ORDER = { failed: 0, partial: 1, running: 2, ok: 3 } as const
+
+/** Start of a local calendar day ('YYYY-MM-DD'), optionally shifted by whole days. */
+function localDay(day: string, shift = 0) {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(y, m - 1, d + shift).getTime()
+}
 
 const MODES = {
   replaceAll: { label: 'Full restore (replace all tables)', hint: 'The target ends up exactly like the backup. Tables not in the backup are emptied.' },
@@ -53,10 +72,56 @@ function Runs() {
   const navigate = useNavigate({ from: Route.fullPath })
   const [source, setSource] = useState<Source | null>(null)
   const [contents, setContents] = useState<RunView | null>(null)
+  const [deleting, setDeleting] = useState<RunView | null>(null)
+  const [query, setQuery] = useState('')
+  const [status, setStatus] = useState<'all' | keyof typeof STATUSES>('all')
+  const [instance, setInstance] = useState('all')
+  const [sort, setSort] = useState<Sort>({ key: 'started', dir: 'desc' })
   const { can: allowed } = useWorkspace()
   usePolling(data.runs.some((r) => r.status === 'running') || data.restores.some((r) => r.status === 'running'))
   const destName = (id: string) => data.destinations.find((d) => d.id === id)?.name ?? 'Deleted destination'
   const jobName = search.job ? data.runs.find((r) => r.job_id === search.job)?.job_name : null
+  const instances = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const r of data.runs) seen.set(r.instance_id ?? 'deleted', r.instance_name)
+    return [...seen].sort((a, b) => a[1].localeCompare(b[1]))
+  }, [data.runs])
+  const runs = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const from = search.from ? localDay(search.from) : -Infinity
+    const to = search.to ? localDay(search.to, 1) : Infinity
+    const list = data.runs.filter(
+      (r) =>
+        r.started_at >= from &&
+        r.started_at < to &&
+        (status === 'all' || r.status === status) &&
+        (instance === 'all' || (r.instance_id ?? 'deleted') === instance) &&
+        (!q ||
+          [r.instance_name, r.job_name, r.trigger, r.error ?? '', r.status, ...r.copies.map((c) => destName(c.destination_id))]
+            .join(' ')
+            .toLowerCase()
+            .includes(q)),
+    )
+    const value = (r: RunView): number | string =>
+      sort.key === 'started' ? r.started_at : sort.key === 'size' ? (r.bytes ?? -1) : sort.key === 'status' ? STATUS_ORDER[r.status] : `${r.instance_name} ${r.job_name}`.toLowerCase()
+    const dir = sort.dir === 'asc' ? 1 : -1
+    return list.sort((a, b) => {
+      const x = value(a)
+      const y = value(b)
+      return (x < y ? -1 : x > y ? 1 : 0) * dir || (b.started_at - a.started_at)
+    })
+  }, [data.runs, query, status, instance, sort, search.from, search.to])
+  const filtering = Boolean(query || status !== 'all' || instance !== 'all' || search.from || search.to)
+  const setDates = (next: { from?: string; to?: string }) =>
+    navigate({ search: (s) => ({ ...s, from: next.from || undefined, to: next.to || undefined }), replace: true })
+  const toggleSort = (key: SortKey) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'instance' ? 'asc' : 'desc' }))
+  const clearFilters = () => {
+    setQuery('')
+    setStatus('all')
+    setInstance('all')
+    setDates({})
+  }
 
   return (
     <>
@@ -76,7 +141,37 @@ function Runs() {
             )}
           </div>
           <TabsContent value="backups" className="mt-4">
-            {data.runs.length === 0 ? (
+            {data.runs.length > 0 || search.from || search.to ? (
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <div className="relative min-w-56 flex-1">
+                  <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+                  <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search instance, job, destination, error…" className="pl-8" aria-label="Search backups" />
+                </div>
+                <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
+                  <SelectTrigger className="w-36" aria-label="Status"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    {Object.entries(STATUSES).map(([k, label]) => <SelectItem key={k} value={k}>{label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={instance} onValueChange={setInstance}>
+                  <SelectTrigger className="w-44" aria-label="Instance"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All instances</SelectItem>
+                    {instances.map(([id, name]) => <SelectItem key={id} value={id}>{name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-1">
+                  <Input type="date" value={search.from ?? ''} max={search.to} onChange={(e) => setDates({ from: e.target.value, to: search.to })} className="w-36" aria-label="From date" />
+                  <span className="text-muted-foreground text-sm">to</span>
+                  <Input type="date" value={search.to ?? ''} min={search.from} onChange={(e) => setDates({ from: search.from, to: e.target.value })} className="w-36" aria-label="To date" />
+                </div>
+                {filtering && (
+                  <Button size="sm" variant="ghost" onClick={clearFilters}><X /> Clear</Button>
+                )}
+              </div>
+            ) : null}
+            {data.runs.length === 0 && !search.from && !search.to ? (
               <Empty className="border">
                 <EmptyHeader>
                   <EmptyMedia variant="icon"><Activity /></EmptyMedia>
@@ -89,16 +184,24 @@ function Runs() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="pl-4">Started</TableHead>
-                      <TableHead>Instance / job</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Size</TableHead>
+                      <SortHead label="Started" k="started" sort={sort} onSort={toggleSort} className="pl-4" />
+                      <SortHead label="Instance / job" k="instance" sort={sort} onSort={toggleSort} />
+                      <SortHead label="Status" k="status" sort={sort} onSort={toggleSort} />
+                      <SortHead label="Size" k="size" sort={sort} onSort={toggleSort} />
                       <TableHead>Copies</TableHead>
                       <TableHead className="w-52" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.runs.map((r) => {
+                    {runs.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-muted-foreground py-10 text-center text-sm">
+                          No backups match these filters.{' '}
+                          {filtering && <button type="button" className="underline" onClick={clearFilters}>Clear filters</button>}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {runs.map((r) => {
                       const available = r.copies.filter((c) => c.status === 'ok' && !c.deleted)
                       return (
                         <TableRow key={r.id}>
@@ -175,6 +278,18 @@ function Runs() {
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             )}
+                            {allowed('purge') && r.status !== 'running' && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button size="icon-sm" variant="ghost" aria-label="More actions"><MoreHorizontal /></Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem variant="destructive" onClick={() => setDeleting(r)}>
+                                    <Trash2 /> Delete backup…
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -191,6 +306,7 @@ function Runs() {
         </Tabs>
       </PageBody>
       <RunContents run={contents} onClose={() => setContents(null)} />
+      {deleting && <DeleteRunDialog run={deleting} destName={destName} onClose={() => setDeleting(null)} />}
       {source && <RestoreDialog data={data} source={source} onClose={() => setSource(null)} onDone={() => navigate({ search: (s) => ({ ...s, tab: 'restores' }) })} />}
     </>
   )
@@ -409,5 +525,95 @@ function RestoreDialog({ data, source, onClose, onDone }: { data: Data; source: 
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function SortHead({ label, k, sort, onSort, className }: { label: string; k: SortKey; sort: Sort; onSort: (k: SortKey) => void; className?: string }) {
+  const active = sort.key === k
+  const Icon = !active ? ArrowUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown
+  return (
+    <TableHead className={className} aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <Button variant="ghost" size="sm" className="-ml-2 h-7 px-2" onClick={() => onSort(k)}>
+        {label} <Icon className={active ? '' : 'text-muted-foreground/60'} />
+      </Button>
+    </TableHead>
+  )
+}
+
+/** Two confirmations: first explains what goes, then asks to type DELETE. */
+function DeleteRunDialog({ run: r, destName, onClose }: { run: RunView; destName: (id: string) => string; onClose: () => void }) {
+  const del = useServerFn(deleteRun)
+  const { run, pending } = useAction()
+  const [step, setStep] = useState<1 | 2>(1)
+  const [confirm, setConfirm] = useState('')
+  const stored = r.copies.filter((c) => c.status === 'ok' && !c.deleted)
+  const locked = stored.filter((c) => c.locked_until && c.locked_until > Date.now())
+  const label = `${r.instance_name} · ${formatDate(r.started_at)}`
+
+  return (
+    <AlertDialog open onOpenChange={(o) => !o && !pending && onClose()}>
+      <AlertDialogContent className="sm:max-w-md">
+        {step === 1 ? (
+          <>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete this backup?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-2">
+                  <p>{label} · {formatBytes(r.bytes)}</p>
+                  {stored.length > 0 ? (
+                    <p>
+                      Its file{stored.length === 1 ? '' : 's'} will be permanently deleted from{' '}
+                      <span className="text-foreground font-medium">{stored.map((c) => destName(c.destination_id)).join(', ')}</span>, and the run removed from history.
+                    </p>
+                  ) : (
+                    <p>No stored files are left for this run — only its history entry is removed.</p>
+                  )}
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {locked.length > 0 && (
+              <Alert variant="destructive">
+                <Lock />
+                <AlertTitle>Under Object Lock</AlertTitle>
+                <AlertDescription>
+                  The copy on {locked.map((c) => destName(c.destination_id)).join(', ')} can’t be deleted until {formatDate(Math.max(...locked.map((c) => c.locked_until!)))}.
+                </AlertDescription>
+              </Alert>
+            )}
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <Button variant="destructive" disabled={locked.length > 0} onClick={() => setStep(2)}>Continue</Button>
+            </AlertDialogFooter>
+          </>
+        ) : (
+          <form
+            className="grid gap-4"
+            onSubmit={async (e) => {
+              e.preventDefault()
+              if (confirm !== 'DELETE') return
+              const ok = await run(() => del({ data: { id: r.id, confirm: 'DELETE' } }).then(() => true), { success: 'Backup deleted' })
+              if (ok) onClose()
+            }}
+          >
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2"><TriangleAlert className="text-destructive size-5" /> This can’t be undone</AlertDialogTitle>
+              <AlertDialogDescription>
+                {label} will be gone for good. You won’t be able to restore or download it.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <Field>
+              <FieldLabel htmlFor="delete-confirm">Type <span className="font-mono">DELETE</span> to confirm</FieldLabel>
+              <Input id="delete-confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="off" autoFocus />
+            </Field>
+            <AlertDialogFooter>
+              <Button type="button" variant="outline" disabled={pending} onClick={() => setStep(1)}>Back</Button>
+              <Button type="submit" variant="destructive" disabled={pending || confirm !== 'DELETE'}>
+                <Trash2 /> Delete permanently
+              </Button>
+            </AlertDialogFooter>
+          </form>
+        )}
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }

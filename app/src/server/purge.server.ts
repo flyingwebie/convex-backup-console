@@ -222,3 +222,38 @@ export function startPurgeLoop() {
   g.__purgeTimer = setInterval(() => void purgeExpired(), 60 * 60 * 1000)
   setInterval(tick, 10 * 60 * 1000)
 }
+
+/**
+ * Permanently deletes one backup run: every stored copy is removed from its destination, then the run
+ * itself. Refuses while it's running or while a copy is under Object Lock. If some copies fail to
+ * delete, the run is kept (with the ones that did go marked as deleted) so the operator can retry.
+ */
+export async function deleteRun(workspaceId: string, runId: string, actor: string) {
+  const run = db().prepare('SELECT id, status, started_at FROM runs WHERE id = ? AND workspace_id = ?').get(runId, workspaceId) as
+    | { id: string; status: string; started_at: number }
+    | undefined
+  if (!run) throw new Error('Backup not found')
+  if (run.status === 'running') throw new Error('This backup is still running')
+  const copies = db()
+    .prepare(
+      `SELECT c.run_id, c.destination_id, c.object_key, c.version_id, c.locked_until, d.name FROM run_copies c
+       JOIN destinations d ON d.id = c.destination_id WHERE c.run_id = ? AND c.status = 'ok' AND c.deleted_at IS NULL`,
+    )
+    .all(runId) as (Copy & { name: string })[]
+  const locked = copies.find((c) => c.locked_until && c.locked_until > Date.now())
+  if (locked) throw new Error(`The copy on ${locked.name} is under Object Lock until ${new Date(locked.locked_until!).toISOString().slice(0, 10)}`)
+  const failed: string[] = []
+  for (const c of copies) {
+    const dest = db().prepare('SELECT * FROM destinations WHERE id = ?').get(c.destination_id) as DestinationRow
+    try {
+      await openDestination(dest).delete(c.object_key, c.version_id)
+      db().prepare('UPDATE run_copies SET deleted_at = ?, delete_after = NULL WHERE run_id = ? AND destination_id = ?').run(Date.now(), runId, c.destination_id)
+    } catch (err) {
+      failed.push(c.name)
+      audit(workspaceId, actor, 'run.delete_failed', { runId, key: c.object_key, destination: c.name, error: String(err) })
+    }
+  }
+  if (failed.length) throw new Error(`Couldn't delete the copy on ${failed.join(', ')} — the backup was kept. Check the audit log and try again.`)
+  db().prepare('DELETE FROM runs WHERE id = ?').run(runId)
+  audit(workspaceId, actor, 'run.deleted', { runId, startedAt: new Date(run.started_at).toISOString(), copiesDeleted: copies.length })
+}
