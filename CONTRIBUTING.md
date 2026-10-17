@@ -64,8 +64,9 @@ behaviour, and mention in the PR which suites you ran.
 ## Releases
 
 Images are built for amd64 and arm64 by `.github/workflows/backup-console.yml` and published to
-`ghcr.io/flyingwebie/convex-backup-console` (`latest`, `sha-…` and `console-vX.Y.Z` tags). Bump `version` in
-`app/package.json` with each release, add it to [`CHANGELOG.md`](CHANGELOG.md), then tag the merge commit
-`console-vX.Y.Z` (e.g. `console-v1.0.0-beta.1`) to publish the matching image tag.
+`ghcr.io/flyingwebie/convex-backup-console` (`latest`, `sha-…` and `X.Y.Z` tags). Every user-facing change bumps
+`version` in `app/package.json` and adds a section to [`CHANGELOG.md`](CHANGELOG.md). When a new version is merged
+to `main`, CI publishes the `X.Y.Z` image tag, tags the commit `console-vX.Y.Z` and creates the GitHub release
+(notes from the changelog; versions with a `-` suffix are marked pre-release).
 
 By contributing you agree that your contributions are licensed under the [MIT License](LICENSE).

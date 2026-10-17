@@ -264,10 +264,27 @@ export type JobView = ReturnType<typeof listJobs>[number]
 function listRestores(ws: string, limit: number) {
   return db()
     .prepare(
-      `SELECT id, run_id, object_key, target_name, mode, actor, status, confirm_message, rows_written, error, started_at, finished_at, tables, scrubbed
-       FROM restores WHERE workspace_id = ? ORDER BY started_at DESC LIMIT ${Number(limit)}`,
+      `SELECT x.id, x.run_id, x.object_key, x.target_name, x.mode, x.actor, x.status, x.confirm_message, x.rows_written, x.error,
+              x.started_at, x.finished_at, x.tables, x.scrubbed, t.url AS target_url,
+              i.name AS source_name, r.started_at AS backup_at, r.bytes AS backup_bytes, r.encrypted AS backup_encrypted,
+              d.name AS destination_name, d.kind AS destination_kind,
+              (SELECT COUNT(*) FROM restore_logs l WHERE l.restore_id = x.id) AS log_lines
+       FROM restores x
+       LEFT JOIN runs r ON r.id = x.run_id
+       LEFT JOIN instances i ON i.id = r.instance_id
+       LEFT JOIN instances t ON t.id = x.target_instance_id
+       LEFT JOIN destinations d ON d.id = x.destination_id
+       WHERE x.workspace_id = ? ORDER BY x.started_at DESC LIMIT ${Number(limit)}`,
     )
     .all(ws) as {
+    target_url: string | null
+    source_name: string | null
+    backup_at: number | null
+    backup_bytes: number | null
+    backup_encrypted: number | null
+    destination_name: string | null
+    destination_kind: string | null
+    log_lines: number
     tables: string | null
     scrubbed: number
     id: string
@@ -683,6 +700,21 @@ export const restoreBackup = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const { ws, user } = await requireWorkspace('restore')
     return { restoreId: startRestore({ ...data, workspaceId: ws.id, actor: user.email }) }
+  })
+
+/** Live restore log lines after `after` (the last line id the client has), plus the restore's status. */
+export const getRestoreLog = createServerFn({ method: 'GET' })
+  .validator(parse(z.object({ id: z.string(), after: z.number().int().nonnegative().default(0) })))
+  .handler(async ({ data }) => {
+    const { ws } = await requireWorkspace('view')
+    const restore = db()
+      .prepare('SELECT status, rows_written, error, finished_at FROM restores WHERE id = ? AND workspace_id = ?')
+      .get(data.id, ws.id) as { status: 'running' | 'ok' | 'failed'; rows_written: number | null; error: string | null; finished_at: number | null } | undefined
+    if (!restore) throw new Error('Restore not found')
+    const lines = db()
+      .prepare('SELECT id, at, level, text FROM restore_logs WHERE restore_id = ? AND id > ? ORDER BY id LIMIT 2000')
+      .all(data.id, data.after) as { id: number; at: number; level: 'info' | 'dim' | 'success' | 'warn' | 'error'; text: string }[]
+    return { ...restore, lines }
   })
 
 // ── Notification channels ────────────────────────────────────

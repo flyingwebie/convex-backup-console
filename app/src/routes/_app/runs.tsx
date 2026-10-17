@@ -1,7 +1,8 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Activity, ArrowDown, ArrowUp, ArrowUpDown, Download, EyeOff, FileLock2, ListTree, Lock, MoreHorizontal, RotateCcw, Search, Trash2, TriangleAlert, X } from 'lucide-react'
+import { Activity, ArrowDown, ArrowRight, ChevronDown, Database, HardDrive, SquareTerminal, ArrowUp, ArrowUpDown, Download, EyeOff, FileLock2, ListTree, Lock, MoreHorizontal, RotateCcw, Search, Trash2, TriangleAlert, X } from 'lucide-react'
 import { RunContents } from '~/components/run-contents'
+import { RestoreTerminal } from '~/components/restore-terminal'
 import { Checkbox } from '~/components/ui/checkbox'
 import { Switch } from '~/components/ui/switch'
 import { FieldContent } from '~/components/ui/field'
@@ -325,46 +326,107 @@ function RestoresTable({ data }: { data: Data }) {
     )
   }
   return (
-    <Card className="py-0">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="pl-4">Started</TableHead>
-            <TableHead>Backup</TableHead>
-            <TableHead>Into</TableHead>
-            <TableHead>Mode</TableHead>
-            <TableHead>Result</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {data.restores.map((r) => (
-            <TableRow key={r.id}>
-              <TableCell className="pl-4">
-                <div className="text-sm">{timeAgo(r.started_at)}</div>
-                <div className="text-muted-foreground text-xs">{r.actor}</div>
-              </TableCell>
-              <TableCell className="text-muted-foreground font-mono text-xs whitespace-normal break-all">{r.object_key}</TableCell>
-              <TableCell className="font-medium">{r.target_name}</TableCell>
-              <TableCell className="text-sm">
-                {MODES[r.mode as keyof typeof MODES]?.label ?? r.mode}
-                {r.tables && <div className="text-muted-foreground font-mono text-xs">{(JSON.parse(r.tables) as string[]).join(', ')}</div>}
-                {r.scrubbed ? <Badge variant="outline" className="mt-1 gap-1"><EyeOff className="size-3" /> scrubbed</Badge> : null}
-              </TableCell>
-              <TableCell className="max-w-80 whitespace-normal">
-                <StatusBadge status={r.status} />
-                {r.rows_written != null && <span className="text-muted-foreground ml-2 text-xs">{r.rows_written.toLocaleString()} documents</span>}
-                {r.error && <p className="text-destructive mt-1 text-xs break-words">{r.error}</p>}
-                {r.confirm_message && (
-                  <details className="mt-1">
-                    <summary className="text-muted-foreground cursor-pointer text-xs">Change summary</summary>
-                    <pre className="bg-muted mt-1 overflow-x-auto rounded p-2 text-[11px] leading-tight">{r.confirm_message}</pre>
-                  </details>
-                )}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="flex flex-col gap-3">
+      {data.restores.map((r) => (
+        <RestoreCard key={r.id} r={r} />
+      ))}
+    </div>
+  )
+}
+
+const DEST_KIND: Record<string, string> = { s3: 'S3', r2: 'R2', local: 'Local disk' }
+
+function RestoreCard({ r }: { r: Data['restores'][number] }) {
+  const [open, setOpen] = useState(r.status === 'running')
+  useEffect(() => {
+    if (r.status === 'running') setOpen(true)
+  }, [r.status])
+  const tables = r.tables ? (JSON.parse(r.tables) as string[]) : null
+  const source = r.source_name ?? 'Deleted instance'
+  return (
+    <Card className="gap-0 py-0">
+      <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center">
+        <div className="grid min-w-0 flex-1 items-center gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <div className="min-w-0 rounded-md border px-3 py-2">
+            <div className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
+              <Database className="size-3" /> Source
+            </div>
+            <div className="truncate font-medium">{source}</div>
+            <div className="text-muted-foreground flex flex-wrap items-center gap-x-1.5 text-xs">
+              {r.backup_at && <span>Backup {formatDate(r.backup_at)}</span>}
+              {r.backup_bytes != null && <span>· {formatBytes(r.backup_bytes)}</span>}
+              {r.backup_encrypted ? (
+                <span className="inline-flex items-center gap-1">
+                  · <Lock className="size-3" />encrypted
+                </span>
+              ) : null}
+            </div>
+            <div className="text-muted-foreground flex items-center gap-1 text-xs">
+              <HardDrive className="size-3 shrink-0" />
+              <span className="truncate">
+                {r.destination_name ?? 'Deleted destination'}
+                {r.destination_kind && ` · ${DEST_KIND[r.destination_kind] ?? r.destination_kind}`}
+              </span>
+            </div>
+          </div>
+          <ArrowRight className="text-muted-foreground mx-auto size-5 rotate-90 sm:rotate-0" />
+          <div className="min-w-0 rounded-md border px-3 py-2">
+            <div className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
+              <RotateCcw className="size-3" /> Target
+            </div>
+            <div className="truncate font-medium">{r.target_name}</div>
+            {r.target_url && <div className="text-muted-foreground truncate font-mono text-xs">{r.target_url}</div>}
+            <div className="text-muted-foreground text-xs">{MODES[r.mode as keyof typeof MODES]?.label ?? r.mode}</div>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col gap-1 lg:w-56 lg:items-end lg:text-right">
+          <div className="flex items-center gap-2 lg:justify-end">
+            <StatusBadge status={r.status} />
+            {r.rows_written != null && <span className="text-muted-foreground text-xs">{r.rows_written.toLocaleString()} documents</span>}
+          </div>
+          <div className="text-muted-foreground text-xs">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>{timeAgo(r.started_at)}</span>
+              </TooltipTrigger>
+              <TooltipContent>{formatDate(r.started_at)}</TooltipContent>
+            </Tooltip>
+            {r.finished_at && <> · took {duration(r.started_at, r.finished_at)}</>}
+          </div>
+          <div className="text-muted-foreground truncate text-xs">by {r.actor}</div>
+          <Button variant="ghost" size="sm" className="-mr-2 h-7 gap-1.5 self-start text-xs lg:self-end" onClick={() => setOpen((o) => !o)}>
+            <SquareTerminal className="size-3.5" />
+            {open ? 'Hide log' : 'Show log'}
+            <ChevronDown className={`size-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+          </Button>
+        </div>
+      </div>
+      {(tables || r.scrubbed || r.error) && (
+        <div className="flex flex-col gap-1.5 border-t px-4 py-2">
+          {(tables || r.scrubbed) && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {tables && <span className="text-muted-foreground text-xs">Tables:</span>}
+              {tables?.map((t) => (
+                <Badge key={t} variant="secondary" className="font-mono text-[11px]">{t}</Badge>
+              ))}
+              {r.scrubbed ? <Badge variant="outline" className="gap-1"><EyeOff className="size-3" /> scrubbed</Badge> : null}
+            </div>
+          )}
+          {r.error && <p className="text-destructive text-xs break-words">{r.error}</p>}
+        </div>
+      )}
+      {open && (
+        <div className="border-t p-3">
+          <RestoreTerminal
+            restoreId={r.id}
+            title={`restore ${source} → ${r.target_name} · ${r.object_key}`}
+            status={r.status}
+            startedAt={r.started_at}
+            finishedAt={r.finished_at}
+            fallback={r.log_lines === 0 ? r.confirm_message : null}
+          />
+        </div>
+      )}
     </Card>
   )
 }

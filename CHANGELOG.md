@@ -3,6 +3,26 @@
 All notable changes to the Convex Backup Console. Versions follow [SemVer](https://semver.org); images are
 published as `ghcr.io/flyingwebie/convex-backup-console:<version>`.
 
+## 1.0.0-beta.2 — 2026-10-18
+
+### Added
+
+- **Live restore log:** every restore streams a terminal-style log in Runs → Restores — download and
+  decryption progress, snapshot preparation, each upload part, Convex's progress messages and change summary,
+  and the final document count. It updates every second while the restore runs, follows the output unless you
+  scroll up, and can be copied. Older restores show their change summary instead.
+- **Restores show source → target:** the source instance, backup date, size, encryption and the storage it came
+  from, next to the target instance, its URL and the restore mode, plus who started it and how long it took.
+- **Backups table:** search, status/instance filters, a date range (kept in the URL) and sortable columns.
+- **Delete a backup** permanently with two confirmations (type `DELETE`); owners only.
+
+### Changed
+
+- Dropdown menus size to their content, so labels no longer wrap.
+- Restores that were running when the console restarted are marked failed instead of staying "Running".
+- Releases are automatic: a new `version` in `app/package.json` merged to `main` publishes the
+  `<version>` image tag, tags the commit `console-v<version>` and creates the GitHub release.
+
 ## 1.0.0-beta.1 — 2026-10-15
 
 First public beta.

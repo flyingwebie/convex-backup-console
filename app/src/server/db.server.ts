@@ -255,11 +255,20 @@ function migrate(conn: Database.Database) {
   add('workspace_settings', 'email_smtp_enc', 'TEXT')
   add('workspace_settings', 'emails_migrated', 'INTEGER NOT NULL DEFAULT 0')
   add('instances', 'stale_alerted_at', 'INTEGER')
+  // Live restore log (shown as a terminal in Runs → Restores).
+  conn.exec(`CREATE TABLE IF NOT EXISTS restore_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    restore_id TEXT NOT NULL REFERENCES restores(id) ON DELETE CASCADE,
+    at INTEGER NOT NULL,
+    level TEXT NOT NULL,
+    text TEXT NOT NULL
+  )`)
   conn.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS instances_ws_name ON instances (workspace_id, name) WHERE deleted_at IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS destinations_ws_name ON destinations (workspace_id, name) WHERE deleted_at IS NULL;
     CREATE INDEX IF NOT EXISTS runs_ws ON runs (workspace_id, started_at);
     CREATE INDEX IF NOT EXISTS audit_ws ON audit (workspace_id, id);
+    CREATE INDEX IF NOT EXISTS restore_logs_restore ON restore_logs (restore_id, id);
   `)
 }
 
