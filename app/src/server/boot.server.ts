@@ -19,6 +19,9 @@ export function ensureBooted(): Promise<void> {
     db()
       .prepare("UPDATE runs SET status = 'failed', error = 'Interrupted by restart', finished_at = ? WHERE status = 'running'")
       .run(Date.now())
+    db()
+      .prepare("UPDATE restores SET status = 'failed', error = 'Interrupted by restart', finished_at = ? WHERE status = 'running'")
+      .run(Date.now())
     syncSchedules()
     startPurgeLoop()
   })().catch((err) => {

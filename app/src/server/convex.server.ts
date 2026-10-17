@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { formatBytes } from '~/lib/format'
 import { env } from './env.server'
 // Minimal client for the Convex backend's admin HTTP API (the same endpoints `npx convex export` uses).
 
@@ -94,22 +95,34 @@ export class ConvexAdmin {
     })
   }
 
-  /** Uploads a snapshot zip and runs the import; resolves with rows written. */
-  async importZip(file: string, mode: ImportMode, onConfirm: (message: string) => void): Promise<number> {
+  /** Uploads a snapshot zip and runs the import; resolves with rows written. `log` receives progress lines. */
+  async importZip(
+    file: string,
+    mode: ImportMode,
+    onConfirm: (message: string) => void,
+    log: ImportLog = () => {},
+  ): Promise<number> {
     const { size } = await fs.promises.stat(file)
     // The backend rejects 10k+ parts; the CLI uses 5 MiB parts.
     const chunkSize = Math.max(8 * 1024 * 1024, Math.ceil(size / 9999))
+    const parts = Math.max(1, Math.ceil(size / chunkSize))
+    log(`Starting upload to ${this.url} (${formatBytes(size)}, ${parts} part${parts === 1 ? '' : 's'})`)
     const { uploadToken } = (await (await this.fetch('/api/import/start_upload', { method: 'POST' })).json()) as {
       uploadToken: string
     }
     const partTokens: unknown[] = []
     let partNumber = 1
+    let sent = 0
     for await (const chunk of fs.createReadStream(file, { highWaterMark: chunkSize })) {
+      const started = Date.now()
       const res = await this.fetch(
-        `/api/import/upload_part?uploadToken=${encodeURIComponent(uploadToken)}&partNumber=${partNumber++}`,
+        `/api/import/upload_part?uploadToken=${encodeURIComponent(uploadToken)}&partNumber=${partNumber}`,
         { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(chunk as Buffer) },
       )
       partTokens.push(await res.json())
+      sent += (chunk as Buffer).length
+      log(`Uploaded part ${partNumber}/${parts} — ${formatBytes(sent)} of ${formatBytes(size)} (${Math.round((sent / size) * 100)}%) in ${((Date.now() - started) / 1000).toFixed(1)}s`, 'dim')
+      partNumber++
     }
     const { importId } = (await (
       await this.fetch('/api/import/finish_upload', {
@@ -118,19 +131,33 @@ export class ConvexAdmin {
         body: JSON.stringify({ import: { mode, format: 'zip' }, uploadToken, partTokens }),
       })
     ).json()) as { importId: string }
+    log(`Upload complete — import ${importId} queued (mode: ${mode})`, 'success')
 
     let confirmed = false
+    let lastState = ''
+    let lastProgress = ''
     const deadline = Date.now() + 6 * 60 * 60 * 1000
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 2000))
+      await new Promise((r) => setTimeout(r, 1000))
       const doc = (await this.query('_system/cli/queryImport', { importId })) as { state: ImportState } | null
       const state = doc?.state
       if (!state) continue
+      if (state.state !== lastState) {
+        lastState = state.state
+        if (state.state === 'uploaded') log('Convex is reading the snapshot…')
+        if (state.state === 'in_progress') log('Import in progress', 'info')
+      }
+      if (state.state === 'in_progress' && state.progress_message && state.progress_message !== lastProgress) {
+        lastProgress = state.progress_message
+        log(state.progress_message, 'dim')
+      }
       if (state.state === 'completed') return Number(toBigInt(state.num_rows_written))
       if (state.state === 'failed') throw new Error(`Import failed: ${state.error_message}`)
       if (state.state === 'waiting_for_confirmation' && !confirmed) {
         // The operator already typed the target name in the console; record what Convex asked.
         onConfirm(state.message_to_confirm ?? '')
+        if (state.message_to_confirm) log(state.message_to_confirm, 'dim')
+        log('Confirmed (target name typed in the console) — applying changes', 'warn')
         await this.fetch('/api/perform_import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -142,6 +169,10 @@ export class ConvexAdmin {
     throw new Error('Timed out waiting for the import to complete')
   }
 }
+
+export type LogLevel = 'info' | 'dim' | 'success' | 'warn' | 'error'
+export type ImportLog = (text: string, level?: LogLevel) => void
+
 
 export type ImportMode = 'replaceAll' | 'replace' | 'append' | 'requireEmpty'
 

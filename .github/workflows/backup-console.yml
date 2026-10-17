@@ -73,7 +73,16 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: app/package.json
+          sparse-checkout-cone-mode: false
+      # The version in app/package.json is the release: on main it also becomes an image tag.
+      - id: version
+        run: echo "version=$(jq -r .version app/package.json)" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
@@ -94,9 +103,35 @@ jobs:
             type=ref,event=branch
             type=sha
             type=match,pattern=console-v(.*),group=1
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.ref == 'refs/heads/main' }}
       - name: Publish the multi-arch tags
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf "$IMAGE@sha256:%s " *)
       - run: docker buildx imagetools inspect "$IMAGE:${{ steps.meta.outputs.version }}"
+
+  # A new version on main tags the commit `console-v<version>` and publishes a GitHub release
+  # (notes from that version's CHANGELOG.md section). Existing tags are left alone.
+  release:
+    needs: merge
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.merge.outputs.version }}
+        run: |
+          TAG="console-v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists, nothing to release"; exit 0
+          fi
+          awk -v v="$VERSION" '$0 ~ "^## " v "( |$)" {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Image: \`ghcr.io/${{ github.repository_owner }}/convex-backup-console:$VERSION\`" > notes.md
+          PRERELEASE=$([[ "$VERSION" == *-* ]] && echo --prerelease || true)
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Console $VERSION" --notes-file notes.md $PRERELEASE
