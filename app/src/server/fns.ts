@@ -22,7 +22,7 @@ import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { decryptStream } from './encryption.server'
 import { inspectZip, type Manifest, type ScrubRule } from './zip.server'
-import { purgeItem, purgeWorkspace, restoreItem, restoreWorkspace, softDelete, softDeleteWorkspace, workspaceGraceDays } from './purge.server'
+import { deleteRun as deleteRunNow, purgeItem, purgeWorkspace, restoreItem, restoreWorkspace, softDelete, softDeleteWorkspace, workspaceGraceDays } from './purge.server'
 import { isRestoring, startRestore } from './restore.server'
 import { nextRun, syncSchedules } from './scheduler.server'
 import { openDestination, type DestinationRow } from './storage.server'
@@ -146,17 +146,19 @@ export const createWorkspace = createServerFn({ method: 'POST' })
 
 type CopyRow = { destination_id: string; status: string; error: string | null; key: string; deleted: number; locked_until: number | null }
 
-function listRuns(ws: string, limit: number, jobId?: string) {
+function listRuns(ws: string, limit: number, jobId?: string, range: { from?: number; to?: number } = {}) {
+  const where = [jobId && 'AND r.job_id = ?', range.from != null && 'AND r.started_at >= ?', range.to != null && 'AND r.started_at < ?'].filter(Boolean).join(' ')
+  const params = [jobId, range.from, range.to].filter((p) => p != null)
   const rows = db()
     .prepare(
       `SELECT r.*, j.name AS job_name, i.name AS instance_name,
          (SELECT json_group_array(json_object('destination_id', c.destination_id, 'status', c.status, 'error', c.error, 'key', c.object_key, 'deleted', c.deleted_at IS NOT NULL, 'locked_until', c.locked_until))
           FROM run_copies c WHERE c.run_id = r.id) AS copies
        FROM runs r LEFT JOIN jobs j ON j.id = r.job_id LEFT JOIN instances i ON i.id = r.instance_id
-       WHERE r.workspace_id = ? ${jobId ? 'AND r.job_id = ?' : ''}
+       WHERE r.workspace_id = ? ${where}
        ORDER BY r.started_at DESC LIMIT ${Number(limit)}`,
     )
-    .all(ws, ...(jobId ? [jobId] : [])) as Record<string, unknown>[]
+    .all(ws, ...params) as Record<string, unknown>[]
   return rows.map((r) => ({
     id: String(r.id),
     job_id: (r.job_id as string | null) ?? null,
@@ -336,12 +338,21 @@ export const getJobs = createServerFn({ method: 'GET' }).handler(async () => {
   }
 })
 
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+
 export const getRuns = createServerFn({ method: 'GET' })
-  .validator(parse(z.object({ jobId: z.string().optional() })))
+  .validator(parse(z.object({ jobId: z.string().optional(), from: isoDay, to: isoDay })))
   .handler(async ({ data }) => {
     const { ws } = await requireWorkspace('view')
+    // Dates are the browser's local days. Widen by a day each side to cover any timezone; the page
+    // trims to the exact local range.
+    const range = {
+      from: data.from ? Date.parse(`${data.from}T00:00:00Z`) - 86_400_000 : undefined,
+      to: data.to ? Date.parse(`${data.to}T00:00:00Z`) + 2 * 86_400_000 : undefined,
+    }
+    const filtered = data.from || data.to
     return {
-      runs: listRuns(ws.id, 100, data.jobId),
+      runs: listRuns(ws.id, filtered ? 1000 : 200, data.jobId, range),
       instances: listInstances(ws.id),
       destinations: listDestinations(ws.id),
       restores: listRestores(ws.id, 50),
@@ -1033,6 +1044,13 @@ export const registerFromInvitation = createServerFn({ method: 'POST' })
     if (db().prepare('SELECT 1 FROM user WHERE email = ?').get(inv.email)) throw new Error('An account already exists — sign in instead')
     await createUserWithPassword({ email: inv.email, name: data.name, password: data.password })
     return { email: inv.email }
+  })
+
+export const deleteRun = createServerFn({ method: 'POST' })
+  .validator(parse(z.object({ id: z.string(), confirm: z.literal('DELETE') })))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('purge')
+    await deleteRunNow(ws.id, data.id, user.email)
   })
 
 // ── Trash ────────────────────────────────────────────────────
