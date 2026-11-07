@@ -1,13 +1,15 @@
 {
   "name": "convex-backup-console",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite dev --port 3000",
     "build": "vite build",
     "start": "node server.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepare": "node -e \"require('fs').existsSync('scripts/prepare.mjs')&&import('./scripts/prepare.mjs')\""
   },
   "dependencies": {
     "@aws-sdk/client-iam": "^3.1164.0",
@@ -68,7 +70,7 @@
     "@types/yauzl": "^3.4.0",
     "@types/yazl": "^3.3.1",
     "@vitejs/plugin-react": "^6.1.2",
-    "playwright": "^1.65.0",
+    "lefthook": "^2.2.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.4"
@@ -77,9 +79,10 @@
     "onlyBuiltDependencies": [
       "better-sqlite3",
       "esbuild",
+      "lefthook",
       "sharp"
     ]
   },
   "packageManager": "pnpm@10.27.0",
-  "version": "1.0.0-beta.3"
+  "version": "1.0.0-beta.4"
 }

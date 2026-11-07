@@ -11,8 +11,8 @@ whole backup estate on one map, spin up a brand-new bucket in under a minute, an
 confidence instead of hope. Plus a production-ready **Convex-on-Coolify** template to run the
 instances themselves.
 
-[![Version](https://img.shields.io/badge/version-1.0.0--beta.3-orange.svg)](CHANGELOG.md)
-[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0--beta.4-orange.svg)](CHANGELOG.md)
+[![AGPL-3.0-or-later License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Deploy on Coolify](https://img.shields.io/badge/deploy%20on-Coolify-8C52FF?logo=coolify&logoColor=white)](docs/coolify.md)
 [![Convex](https://img.shields.io/badge/Convex-self--hosted%20%26%20Cloud-EE342F)](https://convex.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-TanStack%20Start-3178C6?logo=typescript&logoColor=white)](app)
@@ -334,4 +334,20 @@ Found a vulnerability? Please report it privately as described in [`SECURITY.md`
 
 ## License
 
-[MIT](LICENSE) © Davide Del Gatto · Flying Web Solutions. Not affiliated with Convex, Inc. or Coolify.
+**Code:** [AGPL-3.0-or-later](LICENSE), from version `1.0.0-beta.3`. Versions up to and including `1.0.0-beta.2`
+were released under the MIT licence and remain available under those terms (see their tags/releases).
+
+- Self-hosting the console unmodified is free for any use, including commercial.
+- If you **modify** it, you don't have to publish your changes to the world. But everyone who uses your modified
+  version over a network (your team, contractors or customers) must be offered its source code (AGPL §13). The
+  sidebar's source link points to this repository, so after modifying the console, point it at your own modified
+  source.
+- **Commercial licences** (to use the code without the AGPL's source-sharing obligations) are available from the
+  copyright holder — open an issue or see the contact in [`SECURITY.md`](SECURITY.md).
+- Contributions are accepted under the [Contributor License Agreement](CLA.md), which keeps relicensing (including
+  dual-licensing under terms other than the AGPL) possible.
+
+**Docs:** the contents of [`docs/`](docs) and this README (including screenshots) are licensed under
+[CC BY 4.0](docs/LICENSE). Code samples embedded in the docs remain licensed under the code licence above.
+
+© Davide Del Gatto · Flying Web Solutions. Not affiliated with Convex, Inc. or Coolify.

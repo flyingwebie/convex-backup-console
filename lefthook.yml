@@ -1,0 +1,24 @@
+# Git hooks for this repo, installed by `pnpm install` in app/ (see app/scripts/prepare.mjs).
+# Skip in an emergency with `LEFTHOOK=0 git commit ...` / `LEFTHOOK=0 git push ...`.
+pre-commit:
+  jobs:
+    - name: typecheck
+      glob:
+        - 'app/*.{ts,tsx}'
+        - 'app/**/*.{ts,tsx}'
+      root: app
+      run: pnpm typecheck
+
+commit-msg:
+  jobs:
+    - name: commit message format
+      run: node app/scripts/check-commit-msg.mjs {1}
+
+pre-push:
+  jobs:
+    - name: test
+      root: app
+      run: pnpm test
+    - name: build
+      root: app
+      run: pnpm build

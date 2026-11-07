@@ -3,7 +3,7 @@
 All notable changes to the Convex Backup Console. Versions follow [SemVer](https://semver.org); images are
 published as `ghcr.io/flyingwebie/convex-backup-console:<version>`.
 
-## 1.0.0-beta.3 — 2026-11-07
+## 1.0.0-beta.4 — 2026-11-07
 
 ### Added
 
@@ -50,6 +50,16 @@ published as `ghcr.io/flyingwebie/convex-backup-console:<version>`.
 ### Fixed
 
 - A stray `0` could render in a restore card's footer.
+
+## 1.0.0-beta.3 — 2026-11-07
+
+### Changed
+
+- **Licence:** AGPL-3.0-or-later from this release. Versions up to `1.0.0-beta.2` remain available under MIT.
+  Self-hosting unmodified stays free for any use; anyone running a modified copy must offer its source to its
+  users. Docs and screenshots are CC BY 4.0. Outside contributions require the [CLA](CLA.md).
+- **Contributing:** every pull request runs CI (typecheck, tests, build, Docker build and a dependency licence
+  check), and `pnpm install` sets up git hooks that check commits and pushes.
 
 ## 1.0.0-beta.2 — 2026-10-18
 
