@@ -32,9 +32,20 @@ function loadAllowlist() {
   try {
     const entries = JSON.parse(readFileSync(file, 'utf8'))
     if (!Array.isArray(entries)) throw new Error('license-allowlist.json must be a JSON array')
+    entries.forEach((e, i) => {
+      if (!e || typeof e !== 'object' || typeof e.name !== 'string' || e.name === '') {
+        throw new Error(`license-allowlist.json entry ${i} must be an object with a string "name"`)
+      }
+      if (e.version !== undefined && typeof e.version !== 'string') {
+        throw new Error(`license-allowlist.json entry ${i} has a non-string "version"`)
+      }
+      if (typeof e.reason !== 'string' || e.reason.trim() === '') {
+        throw new Error(`license-allowlist.json entry ${i} must have a non-empty "reason"`)
+      }
+    })
     return entries
   } catch (err) {
-    if (err.code === 'ENOENT') return []
+    if (err.code === 'ENOENT') throw new Error('scripts/license-allowlist.json is missing (use [] for no exceptions)')
     throw err
   }
 }
@@ -58,7 +69,7 @@ function main() {
   const warnings = []
 
   for (const [license, packages] of Object.entries(byLicense)) {
-    const isUnknown = /unknown/i.test(license) || license.trim() === ''
+    const isUnknown = /unknown|see licen[cs]e|custom/i.test(license) || license.trim() === ''
     const incompatible = INCOMPATIBLE_PATTERNS.find(({ re }) => re.test(license))
 
     for (const pkg of packages) {
@@ -69,7 +80,7 @@ function main() {
         if (incompatible) {
           failures.push({ name: pkg.name, version, license, reason: incompatible.reason })
         } else if (isUnknown) {
-          warnings.push({ name: pkg.name, version, license })
+          failures.push({ name: pkg.name, version, license, reason: 'licence is unknown or unreported; review it and add it to the allowlist' })
         }
       }
     }

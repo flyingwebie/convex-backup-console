@@ -284,13 +284,13 @@ Found a vulnerability? Please report it privately as described in [`SECURITY.md`
 ## License
 
 **Code:** [AGPL-3.0-or-later](LICENSE), from version `1.0.0-beta.3`. Versions up to and including `1.0.0-beta.2`
-were released under the MIT License and remain available under those terms (see their tags/releases).
+were released under the MIT licence and remain available under those terms (see their tags/releases).
 
-- Self-hosting the console unmodified — or modified for your own internal use — is free for any use, including
-  commercial, with no obligation to share your changes.
-- If you **run a modified version of the console as a network service for others**, the AGPL (§13) requires you to
-  offer those users the corresponding source code of your modified version. The console always links to its own
-  source in the sidebar footer, so this is usually a non-issue unless you strip that out.
+- Self-hosting the console unmodified is free for any use, including commercial.
+- If you **modify** it, you don't have to publish your changes to the world. But everyone who uses your modified
+  version over a network (your team, contractors or customers) must be offered its source code (AGPL §13). The
+  sidebar's source link points to this repository, so after modifying the console, point it at your own modified
+  source.
 - **Commercial licences** (to use the code without the AGPL's source-sharing obligations) are available from the
   copyright holder — open an issue or see the contact in [`SECURITY.md`](SECURITY.md).
 - Contributions are accepted under the [Contributor License Agreement](CLA.md), which keeps relicensing (including

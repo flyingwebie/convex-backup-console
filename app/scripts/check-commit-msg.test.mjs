@@ -10,6 +10,10 @@ describe('validateCommitMessage', () => {
     expect(validateCommitMessage('🐛 fix(restore): keep unselected tables')).toEqual({ valid: true })
   })
 
+  it('accepts an emoji followed by a variation selector', () => {
+    expect(validateCommitMessage('♻️ refactor: tidy the retention helpers')).toEqual({ valid: true })
+  })
+
   it('accepts a commit with no scope', () => {
     expect(validateCommitMessage('🔧 chore: bump dependencies')).toEqual({ valid: true })
   })

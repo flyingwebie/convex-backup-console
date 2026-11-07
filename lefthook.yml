@@ -3,7 +3,9 @@
 pre-commit:
   jobs:
     - name: typecheck
-      glob: 'app/**/*.{ts,tsx}'
+      glob:
+        - 'app/*.{ts,tsx}'
+        - 'app/**/*.{ts,tsx}'
       root: app
       run: pnpm typecheck
 
