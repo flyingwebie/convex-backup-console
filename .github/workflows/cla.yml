@@ -31,7 +31,7 @@ jobs:
           path-to-document: 'https://github.com/${{ github.repository }}/blob/main/CLA.md'
           path-to-signatures: 'signatures/cla.json'
           branch: 'cla-signatures'
-          allowlist: flyingwebie,dependabot[bot],github-actions[bot],*[bot]
+          allowlist: flyingwebie,claude,dependabot[bot],github-actions[bot],*[bot]
           custom-notsigned-prcomment: >-
             Thank you for the pull request! Before we can merge it, please sign the
             [Contributor License Agreement](https://github.com/${{ github.repository }}/blob/main/CLA.md) by
