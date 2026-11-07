@@ -47,13 +47,14 @@ export function workspaceSettings(workspaceId: string): WorkspaceSettings {
   return db().prepare('SELECT * FROM workspace_settings WHERE workspace_id = ?').get(workspaceId) as WorkspaceSettings
 }
 
-export type Membership = { id: string; name: string; slug: string; logo: string | null; role: Role }
+export type Membership = { id: string; name: string; slug: string; logo: string | null; role: Role; theme: string | null }
 
-/** Workspaces the user belongs to, excluding ones in the trash. */
+/** Workspaces the user belongs to, excluding ones in the trash. Includes each workspace's accent
+ * theme (`theme` — see `~/lib/themes`) so the sidebar switcher can show a per-workspace dot. */
 export function membershipsOf(userId: string): Membership[] {
   return db()
     .prepare(
-      `SELECT o.id, o.name, o.slug, o.logo, m.role FROM member m JOIN organization o ON o.id = m.organizationId
+      `SELECT o.id, o.name, o.slug, o.logo, m.role, s.theme FROM member m JOIN organization o ON o.id = m.organizationId
        LEFT JOIN workspace_settings s ON s.workspace_id = o.id
        WHERE m.userId = ? AND s.deleted_at IS NULL ORDER BY o.name`,
     )

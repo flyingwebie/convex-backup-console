@@ -14,6 +14,7 @@ import { Input } from '~/components/ui/input'
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '~/components/ui/input-otp'
 import { Tabs, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { authClient } from '~/lib/auth-client'
+import { cn } from '~/lib/utils'
 import { confirmEnrolment, getUser } from '~/server/fns'
 
 export const Route = createFileRoute('/security')({
@@ -30,9 +31,17 @@ function Security() {
   const { user } = Route.useRouteContext()
   const [method, setMethod] = useState<'totp' | 'passkey'>('totp')
   return (
-    <AuthShell top={user.onboarding ? <SetupSteps current="security" /> : undefined}>
+    <AuthShell
+      top={user.onboarding ? <SetupSteps current="security" /> : undefined}
+      vaultStage={user.onboarding ? 'secured' : 'graph'}
+      vaultCaption={
+        user.onboarding
+          ? 'Your account is the root of trust — secure it before anything else.'
+          : 'Two-factor is required to manage anything here — even you.'
+      }
+    >
       <Card>
-        <CardHeader className="text-center">
+        <CardHeader>
           <CardTitle className="text-xl">Secure your account</CardTitle>
           <CardDescription>A second factor is required before you can manage backups.</CardDescription>
         </CardHeader>
@@ -43,14 +52,14 @@ function Security() {
               <TabsTrigger value="passkey"><Fingerprint /> Passkey</TabsTrigger>
             </TabsList>
           </Tabs>
-          {method === 'totp' ? <TotpSetup hasPassword={user.hasPassword} /> : <PasskeySetup />}
+          {method === 'totp' ? <TotpSetup hasPassword={user.hasPassword} onboarding={user.onboarding} /> : <PasskeySetup />}
         </CardContent>
       </Card>
     </AuthShell>
   )
 }
 
-function TotpSetup({ hasPassword }: { hasPassword: boolean }) {
+function TotpSetup({ hasPassword, onboarding }: { hasPassword: boolean; onboarding: boolean }) {
   const confirm = useServerFn(confirmEnrolment)
   const [setup, setSetup] = useState<{ qr: string; secret: string; codes: string[] } | null>(null)
   const [code, setCode] = useState('')
@@ -132,7 +141,10 @@ function TotpSetup({ hasPassword }: { hasPassword: boolean }) {
           </div>
         </Field>
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-        <Button type="submit" disabled={busy || code.length < 6}>Verify and enable</Button>
+        <div className={cn(onboarding && 'flex items-center justify-between')}>
+          {onboarding && <span className="text-muted-foreground text-xs">Step 2 of 4</span>}
+          <Button type="submit" disabled={busy || code.length < 6}>Verify and enable</Button>
+        </div>
       </FieldGroup>
     </form>
   )

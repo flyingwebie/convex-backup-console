@@ -17,6 +17,7 @@ import {
   Plus,
   ScrollText,
   PieChart,
+  Search,
   Server,
   Settings2,
   Sun,
@@ -27,6 +28,7 @@ import {
 import { useTheme } from 'next-themes'
 import { useState } from 'react'
 import { CreateWorkspaceDialog } from '~/components/create-workspace'
+import { useOpenCommandPalette } from '~/components/command-palette'
 import { GitHubIcon } from '~/components/provider-icons'
 import { WorkspaceLogo } from '~/components/workspace-logo'
 import {
@@ -53,13 +55,21 @@ import {
 import { authClient } from '~/lib/auth-client'
 import { APP_VERSION, GIT_SHA, REPO_URL } from '~/lib/meta'
 import { ROLE_INFO, can, type Action } from '~/lib/permissions'
+import { THEME_SWATCH, isTheme } from '~/lib/themes'
 import { switchWorkspace, type getAppContext } from '~/server/fns'
+
+/** Accent dot colour for a workspace in the switcher — falls back to the neutral swatch for an
+ * unset or unrecognised theme rather than omitting the dot. */
+function workspaceAccent(theme: string | null | undefined) {
+  return THEME_SWATCH[isTheme(theme) ? theme : 'neutral']
+}
 
 type App = NonNullable<Awaited<ReturnType<typeof getAppContext>>>
 /** `tour` is the product-tour target (`data-tour="nav-…"`, see ~/lib/tour). */
-type Item = { to: string; label: string; icon: typeof Database; need?: Action; tour?: string }
+export type NavItem = { to: string; label: string; icon: typeof Database; need?: Action; tour?: string }
 
-const nav: { label: string; items: Item[] }[] = [
+/** Exported so the ⌘K command palette's "Navigate" group can list exactly these destinations. */
+export const nav: { label: string; items: NavItem[] }[] = [
   {
     label: 'Backups',
     items: [
@@ -93,6 +103,7 @@ export function AppSidebar({ app, onTour }: { app: App; onTour: () => void }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const router = useRouter()
   const { theme, setTheme } = useTheme()
+  const openPalette = useOpenCommandPalette()
   const doSwitch = useServerFn(switchWorkspace)
   const [creating, setCreating] = useState(false)
   const active = app.active
@@ -108,7 +119,16 @@ export function AppSidebar({ app, onTour }: { app: App; onTour: () => void }) {
                 <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent" data-tour="workspace">
                   <WorkspaceLogo name={active?.name ?? '—'} logo={active?.logo} />
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold">{active?.name ?? 'No workspace'}</span>
+                    <span className="flex items-center gap-1.5 truncate font-semibold">
+                      <span className="truncate">{active?.name ?? 'No workspace'}</span>
+                      {active && (
+                        <span
+                          className="size-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: workspaceAccent(active.theme) }}
+                          aria-hidden
+                        />
+                      )}
+                    </span>
                     <span className="text-muted-foreground truncate text-xs">{active ? ROLE_INFO[active.role].label : 'Convex Backups'}</span>
                   </div>
                   <ChevronsUpDown className="ml-auto size-4" />
@@ -128,7 +148,12 @@ export function AppSidebar({ app, onTour }: { app: App; onTour: () => void }) {
                   >
                     <WorkspaceLogo name={w.name} logo={w.logo} className="size-6 rounded-md text-[10px]" />
                     <span className="truncate">{w.name}</span>
-                    {w.id === active?.id && <Check className="ml-auto" />}
+                    <span
+                      className="ml-auto size-1.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: workspaceAccent(w.theme) }}
+                      aria-hidden
+                    />
+                    {w.id === active?.id && <Check className="size-4 shrink-0" />}
                   </DropdownMenuItem>
                 ))}
                 {app.user.isPlatformAdmin && (
@@ -141,6 +166,15 @@ export function AppSidebar({ app, onTour }: { app: App; onTour: () => void }) {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={openPalette} tooltip="Search (⌘K)" className="text-muted-foreground">
+              <Search />
+              <span>Search…</span>
+              <kbd className="bg-muted text-muted-foreground ml-auto hidden rounded border px-1.5 py-0.5 font-mono text-[10px] group-data-[collapsible=icon]:hidden md:inline-block">
+                ⌘K
+              </kbd>
+            </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>

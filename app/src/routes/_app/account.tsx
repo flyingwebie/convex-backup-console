@@ -1,7 +1,7 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Fingerprint, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { CalendarDays, Fingerprint, Link2, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Confirm } from '~/components/confirm'
 import { PageBody, PageHeader } from '~/components/page'
@@ -35,6 +35,20 @@ function describeAgent(ua?: string | null) {
   return `${browser}${os ? ` on ${os}` : ''}`
 }
 
+const isMobileAgent = (ua?: string | null) => Boolean(ua && /iPhone|iPad|Android/.test(ua))
+
+/** Crude strength read for the new-password meter — length + character-class variety. Purely a
+ * visual hint; the server still enforces the 12-character minimum regardless of this score. */
+function passwordStrength(pw: string) {
+  if (!pw) return 0
+  let score = 0
+  if (pw.length >= 12) score++
+  if (pw.length >= 16) score++
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++
+  if (/[0-9]/.test(pw) && /[^a-zA-Z0-9]/.test(pw)) score++
+  return Math.min(score, 4)
+}
+
 function Account() {
   const { app } = Route.useRouteContext()
   const { providers, me } = Route.useLoaderData()
@@ -43,6 +57,7 @@ function Account() {
   const [passkeys, setPasskeys] = useState<Passkey[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [current, setCurrent] = useState<string | null>(null)
+  const [createdAt, setCreatedAt] = useState<Date | null>(null)
 
   async function load() {
     const [s, p, a, c] = await Promise.all([
@@ -55,21 +70,46 @@ function Account() {
     setPasskeys((p.data ?? []) as Passkey[])
     setAccounts((a.data ?? []) as Account[])
     setCurrent(c.data?.session.token ?? null)
+    setCreatedAt(c.data?.user.createdAt ? new Date(c.data.user.createdAt) : null)
   }
   useEffect(() => void load(), [])
 
   const factorCount = (me?.hasTotp ? 1 : 0) + passkeys.length
   const linked = new Set(accounts.map((a) => a.providerId))
+  const initials = app.user.name
+    .split(/\s+/)
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
 
   return (
     <>
       <PageHeader title="Account & security" description={app.user.email} />
       <PageBody>
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className="bg-muted flex size-10 items-center justify-center rounded-full text-sm font-semibold">{initials}</div>
+            <div>
+              <div className="text-sm font-medium">{app.user.name}</div>
+              <div className="text-muted-foreground text-xs">{app.user.email}</div>
+            </div>
+          </div>
+          {createdAt && (
+            <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+              <CalendarDays className="size-3.5" /> Account created {createdAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+            </div>
+          )}
+        </div>
+
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><ShieldCheck className="size-4" /> Second factors</CardTitle>
-              <CardDescription>Every session must be verified with one of these.</CardDescription>
+            <CardHeader className="flex-row items-start justify-between gap-4">
+              <div>
+                <CardTitle className="flex items-center gap-2"><ShieldCheck className="size-4" /> Second factors</CardTitle>
+                <CardDescription>Required before restores and destructive workspace actions.</CardDescription>
+              </div>
+              <span className="text-muted-foreground font-mono text-xs">{factorCount} active</span>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between rounded-md border p-3">
@@ -115,7 +155,7 @@ function Account() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Connected accounts</CardTitle>
+              <CardTitle className="flex items-center gap-2"><Link2 className="size-4" /> Connected accounts</CardTitle>
               <CardDescription>Sign in with these instead of a password. Your second factor is still required.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -157,16 +197,24 @@ function Account() {
         </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Active sessions</CardTitle>
-            <CardDescription>Devices signed in to your account. Sign out anything you don't recognise.</CardDescription>
+          <CardHeader className="flex-row items-start justify-between gap-4">
+            <div>
+              <CardTitle>Active sessions</CardTitle>
+              <CardDescription>Every device currently signed in to your account. Sign out anything you don't recognise.</CardDescription>
+            </div>
+            <span className="text-muted-foreground font-mono text-xs">{sessions.length} sessions</span>
           </CardHeader>
           <CardContent>
             <ul className="divide-y">
-              {sessions.map((s) => (
+              {sessions.map((s) => {
+                const mobile = isMobileAgent(s.userAgent)
+                const DeviceIcon = mobile ? Smartphone : Monitor
+                return (
                 <li key={s.id} className="flex items-center justify-between gap-4 py-2.5">
                   <div className="flex min-w-0 items-center gap-3">
-                    <Monitor className="text-muted-foreground size-4 shrink-0" />
+                    <span className={`flex size-8 shrink-0 items-center justify-center rounded-md ${s.token === current ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
+                      <DeviceIcon className="size-4" />
+                    </span>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">
                         {describeAgent(s.userAgent)} {s.token === current && <Badge variant="secondary" className="ml-1">This device</Badge>}
@@ -191,7 +239,8 @@ function Account() {
                     </Button>
                   )}
                 </li>
-              ))}
+                )
+              })}
             </ul>
           </CardContent>
           {sessions.length > 1 && (
@@ -255,8 +304,12 @@ function EmailPreferences({ prefs }: { prefs: Awaited<ReturnType<typeof getEmail
   )
 }
 
+const STRENGTH_LABEL = ['', 'Weak', 'Fair', 'Good', 'Strong']
+
 function PasswordCard() {
   const [pending, setPending] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const strength = useMemo(() => passwordStrength(newPassword), [newPassword])
   return (
     <Card>
       <form
@@ -275,11 +328,12 @@ function PasswordCard() {
           if (res.error) return toast.error(res.error.message ?? 'Could not change password')
           toast.success('Password changed — other sessions were signed out')
           form.reset()
+          setNewPassword('')
         }}
       >
         <CardHeader>
           <CardTitle>Change password</CardTitle>
-          <CardDescription>Signs out every other session.</CardDescription>
+          <CardDescription>At least 12 characters. You'll stay signed in on this device.</CardDescription>
         </CardHeader>
         <CardContent className="py-4">
           <FieldGroup className="grid gap-4 sm:grid-cols-3">
@@ -289,16 +343,37 @@ function PasswordCard() {
             </Field>
             <Field>
               <FieldLabel htmlFor="newPassword">New password</FieldLabel>
-              <Input id="newPassword" name="newPassword" type="password" autoComplete="new-password" minLength={12} required />
-              <FieldDescription>At least 12 characters.</FieldDescription>
+              <Input
+                id="newPassword"
+                name="newPassword"
+                type="password"
+                autoComplete="new-password"
+                minLength={12}
+                required
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+              <div className="mt-1.5 flex gap-1" aria-hidden>
+                {[0, 1, 2, 3].map((i) => (
+                  <span
+                    key={i}
+                    className={`h-1 flex-1 rounded-full ${i < strength ? (strength <= 1 ? 'bg-danger' : strength === 2 ? 'bg-warning' : 'bg-success') : 'bg-muted'}`}
+                  />
+                ))}
+              </div>
+              <FieldDescription>{newPassword ? STRENGTH_LABEL[strength] : 'At least 12 characters.'}</FieldDescription>
             </Field>
             <Field>
               <FieldLabel htmlFor="confirm">Confirm new password</FieldLabel>
               <Input id="confirm" name="confirm" type="password" autoComplete="new-password" minLength={12} required />
+              <FieldDescription>Must match the new password.</FieldDescription>
             </Field>
           </FieldGroup>
         </CardContent>
-        <CardFooter><Button type="submit" disabled={pending}>Change password</Button></CardFooter>
+        <CardFooter className="items-center justify-between">
+          <span className="text-muted-foreground text-xs">Other sessions will be signed out after the change.</span>
+          <Button type="submit" disabled={pending}>Update password</Button>
+        </CardFooter>
       </form>
     </Card>
   )

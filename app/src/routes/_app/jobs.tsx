@@ -1,10 +1,11 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
 import { CalendarClock, History, Lock, MoreHorizontal, Pencil, Play, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { z } from 'zod'
 import { Confirm } from '~/components/confirm'
 import { PageBody, PageHeader } from '~/components/page'
-import { Badge } from '~/components/ui/badge'
+import { EntityChip, StatusDot, type DotStatus } from '~/components/viz'
 import { Button } from '~/components/ui/button'
 import { Card } from '~/components/ui/card'
 import { Checkbox } from '~/components/ui/checkbox'
@@ -16,12 +17,17 @@ import { Input } from '~/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import { Switch } from '~/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
-import { CRON_PRESETS, describeCron, describeRetention, timeAgo } from '~/lib/format'
+import { CRON_PRESETS, describeCron, describeRetention, PROVIDER_LABEL, timeAgo } from '~/lib/format'
 import { useAction, usePolling } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
 import { addJob, deleteJob, getJobs, runJobNow, setJobEnabled, updateJob, type JobView } from '~/server/fns'
 
+const LAST_RUN_DOT: Record<string, DotStatus> = { ok: 'success', partial: 'warning', failed: 'danger' }
+
 export const Route = createFileRoute('/_app/jobs')({
+  // `?action=new` lets the ⌘K command palette (and the create-bucket wizard's "Done" step) deep-link
+  // straight into the "New job" dialog; `?destination=<id>` preselects that destination in the form.
+  validateSearch: z.object({ action: z.enum(['new']).optional(), destination: z.string().optional() }),
   loader: () => getJobs(),
   component: Jobs,
 })
@@ -30,7 +36,11 @@ type Data = Awaited<ReturnType<typeof getJobs>>
 
 function Jobs() {
   const data = Route.useLoaderData()
+  const { action, destination } = Route.useSearch()
   const [editing, setEditing] = useState<JobView | 'new' | null>(null)
+  useEffect(() => {
+    if (action === 'new') setEditing('new')
+  }, [action])
   const runNow = useServerFn(runJobNow)
   const toggle = useServerFn(setJobEnabled)
   const del = useServerFn(deleteJob)
@@ -70,104 +80,158 @@ function Jobs() {
             </EmptyContent>
           </Empty>
         ) : (
-          <Card className="py-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="pl-4">Job</TableHead>
-                  <TableHead>Schedule</TableHead>
-                  <TableHead>Retention</TableHead>
-                  <TableHead>Destinations</TableHead>
-                  <TableHead>Active</TableHead>
-                  <TableHead className="w-40" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.jobs.map((j) => {
-                  const inst = instance(j.instance_id)
-                  return (
-                    <TableRow key={j.id}>
-                      <TableCell className="pl-4">
-                        <div className="flex items-center gap-2 font-medium">
-                          {j.name}
-                          {j.encrypt && <Lock className="text-muted-foreground size-3.5" aria-label="Encrypted" />}
-                        </div>
-                        <div className="text-muted-foreground text-xs">{inst?.name}{!j.include_storage && ' · data only, no files'}</div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-sm">{describeCron(j.cron)}{j.cron && <span className="text-muted-foreground text-xs"> · {data.timezone}</span>}</div>
-                        {j.next_run && <div className="text-muted-foreground text-xs">next {timeAgo(j.next_run)}</div>}
-                      </TableCell>
-                      <TableCell className="text-sm">{describeRetention(j)}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {j.destination_ids.map((d) => <Badge key={d} variant="secondary">{dest(d)}</Badge>)}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Switch
-                          checked={j.enabled}
-                          disabled={!j.cron || !allowed('manage')}
-                          aria-label="Schedule active"
-                          onCheckedChange={(enabled) => run(() => toggle({ data: { id: j.id, enabled } }), { success: enabled ? 'Schedule resumed' : 'Schedule paused' })}
-                        />
-                      </TableCell>
-                      <TableCell className="pr-4 text-right">
-                        <div className="flex justify-end gap-1">
-                          {allowed('run') && <Button size="sm" variant="outline" disabled={pending || inst?.busy} onClick={() => run(() => runNow({ data: { id: j.id } }), { success: `${j.name} started` })}>
-                            <Play /> Run
-                          </Button>}
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" aria-label="Actions"><MoreHorizontal /></Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              {allowed('manage') && <DropdownMenuItem onClick={() => setEditing(j)}><Pencil /> Edit</DropdownMenuItem>}
-                              <DropdownMenuItem asChild>
-                                <Link to="/runs" search={{ job: j.id }}><History /> Run history</Link>
-                              </DropdownMenuItem>
-                              {allowed('manage') && (
-                                <>
-                                  <DropdownMenuSeparator />
-                                  <Confirm
-                                    trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Move to trash</DropdownMenuItem>}
-                                    title={`Delete ${j.name}?`}
-                                    description="The schedule stops and the job moves to the Trash. Its backups stay restorable from Runs."
-                                    action="Move to trash"
-                                    onConfirm={() => run(() => del({ data: { id: j.id } }), { success: 'Job moved to trash' })}
-                                  />
-                                </>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </Card>
+          <>
+            <Card className="py-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="pl-4">Job</TableHead>
+                    <TableHead>Instance</TableHead>
+                    <TableHead>Schedule</TableHead>
+                    <TableHead>Retention</TableHead>
+                    <TableHead>Destinations</TableHead>
+                    <TableHead>Active</TableHead>
+                    <TableHead className="w-40" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.jobs.map((j) => {
+                    const inst = instance(j.instance_id)
+                    return (
+                      <TableRow key={j.id}>
+                        <TableCell className="pl-4">
+                          <div className="flex items-center gap-2 font-medium">
+                            {j.name}
+                            {j.encrypt && <Lock className="text-muted-foreground size-3.5" aria-label="Encrypted" />}
+                          </div>
+                          <div className="text-muted-foreground text-xs">{j.include_storage ? 'Database + file storage' : 'Database only'}</div>
+                        </TableCell>
+                        <TableCell>
+                          {inst ? <EntityChip kind="instance" name={inst.name} to="/instances" size="sm" /> : <span className="text-muted-foreground text-xs">Deleted instance</span>}
+                        </TableCell>
+                        <TableCell>
+                          <div className={j.cron ? 'text-sm' : 'text-muted-foreground text-sm'}>{describeCron(j.cron)}</div>
+                          <div className="mt-0.5 flex items-center gap-1.5 text-xs">
+                            {j.last_status && <StatusDot status={LAST_RUN_DOT[j.last_status] ?? 'neutral'} size="sm" label={j.last_status} />}
+                            <span className={j.last_status === 'failed' ? 'text-danger' : 'text-muted-foreground'}>
+                              {j.next_run ? `Next run ${timeAgo(j.next_run)}` : j.cron ? 'Next run —' : ''}
+                              {j.last_status === 'failed' && !j.next_run ? 'Last run failed' : ''}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm">{describeRetention(j)}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {j.destination_ids.map((d) => {
+                              const full = data.destinations.find((dd) => dd.id === d)
+                              return (
+                                <EntityChip
+                                  key={d}
+                                  kind="destination"
+                                  name={full?.name ?? dest(d)}
+                                  meta={full ? PROVIDER_LABEL[full.provider] : undefined}
+                                  size="sm"
+                                  className={!full ? 'border-danger/40 text-danger' : undefined}
+                                />
+                              )
+                            })}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Switch
+                            checked={j.enabled}
+                            disabled={!j.cron || !allowed('manage')}
+                            aria-label="Schedule active"
+                            onCheckedChange={(enabled) => run(() => toggle({ data: { id: j.id, enabled } }), { success: enabled ? 'Schedule resumed' : 'Schedule paused' })}
+                          />
+                        </TableCell>
+                        <TableCell className="pr-4 text-right">
+                          <div className="flex justify-end gap-1">
+                            {allowed('run') && <Button size="sm" variant="outline" disabled={pending || inst?.busy} onClick={() => run(() => runNow({ data: { id: j.id } }), { success: `${j.name} started` })}>
+                              <Play /> Run
+                            </Button>}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" aria-label="Actions"><MoreHorizontal /></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {allowed('manage') && <DropdownMenuItem onClick={() => setEditing(j)}><Pencil /> Edit</DropdownMenuItem>}
+                                <DropdownMenuItem asChild>
+                                  <Link to="/runs" search={{ job: j.id }}><History /> Run history</Link>
+                                </DropdownMenuItem>
+                                {allowed('manage') && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <Confirm
+                                      trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Move to trash</DropdownMenuItem>}
+                                      title={`Delete ${j.name}?`}
+                                      description="The schedule stops and the job moves to the Trash. Its backups stay restorable from Runs."
+                                      action="Move to trash"
+                                      onConfirm={() => run(() => del({ data: { id: j.id } }), { success: 'Job moved to trash' })}
+                                    />
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </Card>
+            <div className="text-muted-foreground flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span>{data.jobs.length} job{data.jobs.length === 1 ? '' : 's'}, {data.jobs.filter((j) => j.enabled).length} active</span>
+              <span className="flex items-center gap-3">
+                <span>Dot = last run</span>
+                <span className="flex items-center gap-1"><StatusDot status="success" size="sm" /> Succeeded</span>
+                <span className="flex items-center gap-1"><StatusDot status="warning" size="sm" /> Partial</span>
+                <span className="flex items-center gap-1"><StatusDot status="danger" size="sm" /> Failed</span>
+                <span className="flex items-center gap-1"><StatusDot status="neutral" size="sm" /> No recent run</span>
+              </span>
+            </div>
+          </>
         )}
       </PageBody>
-      <JobDialog data={data} job={editing} onClose={() => setEditing(null)} />
+      <JobDialog data={data} job={editing} presetDestinationId={destination} onClose={() => setEditing(null)} />
     </>
   )
 }
 
 
-function JobDialog({ data, job, onClose }: { data: Data; job: JobView | 'new' | null; onClose: () => void }) {
+function JobDialog({
+  data,
+  job,
+  presetDestinationId,
+  onClose,
+}: {
+  data: Data
+  job: JobView | 'new' | null
+  presetDestinationId?: string
+  onClose: () => void
+}) {
   if (job === null) return null
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
-        <JobForm data={data} job={job === 'new' ? null : job} onClose={onClose} />
+        <JobForm data={data} job={job === 'new' ? null : job} presetDestinationId={job === 'new' ? presetDestinationId : undefined} onClose={onClose} />
       </DialogContent>
     </Dialog>
   )
 }
 
-function JobForm({ data, job, onClose }: { data: Data; job: JobView | null; onClose: () => void }) {
+function JobForm({
+  data,
+  job,
+  presetDestinationId,
+  onClose,
+}: {
+  data: Data
+  job: JobView | null
+  presetDestinationId?: string
+  onClose: () => void
+}) {
   const add = useServerFn(addJob)
   const update = useServerFn(updateJob)
   const { run, pending } = useAction()
@@ -176,7 +240,12 @@ function JobForm({ data, job, onClose }: { data: Data; job: JobView | null; onCl
   const RECOMMENDED = { keepLast: n(d.keepLast), keepDaily: n(d.keepDaily), keepWeekly: n(d.keepWeekly), keepMonthly: n(d.keepMonthly) }
   const [name, setName] = useState(job?.name ?? 'Daily backup')
   const [instanceId, setInstanceId] = useState(job?.instance_id ?? data.instances[0]?.id ?? '')
-  const [destinationIds, setDestinationIds] = useState<string[]>(job?.destination_ids ?? data.destinations.map((d) => d.id).slice(0, 1))
+  const [destinationIds, setDestinationIds] = useState<string[]>(
+    job?.destination_ids ??
+      (presetDestinationId && data.destinations.some((dd) => dd.id === presetDestinationId)
+        ? [presetDestinationId]
+        : data.destinations.map((dd) => dd.id).slice(0, 1)),
+  )
   const [preset, setPreset] = useState(job ? (job.cron ? (CRON_PRESETS.some(([c]) => c === job.cron) ? job.cron : 'custom') : 'manual') : '0 3 * * *')
   const [customCron, setCustomCron] = useState(job?.cron ?? '')
   const [keepVals, setKeep] = useState(
@@ -230,21 +299,26 @@ function JobForm({ data, job, onClose }: { data: Data; job: JobView | null; onCl
         </div>
 
         <FieldSet>
-          <FieldLegend variant="label">Destinations</FieldLegend>
-          <FieldDescription>Pick at least one off-site destination.</FieldDescription>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {data.destinations.map((d) => (
-              <Field key={d.id} orientation="horizontal" className="rounded-md border p-3">
+          <div className="flex items-baseline justify-between">
+            <FieldLegend variant="label">Destinations</FieldLegend>
+            <span className="text-muted-foreground text-xs">{destinationIds.length} of {data.destinations.length} selected</span>
+          </div>
+          <FieldDescription>Each run uploads a copy to every selected destination.</FieldDescription>
+          <div className="divide-border overflow-hidden rounded-md border">
+            {data.destinations.map((d, i) => (
+              <label
+                key={d.id}
+                htmlFor={`dest-${d.id}`}
+                className={`flex cursor-pointer items-center gap-3 px-3 py-2.5 ${i > 0 ? 'border-t' : ''} ${destinationIds.includes(d.id) ? 'bg-accent/50' : ''}`}
+              >
                 <Checkbox
                   id={`dest-${d.id}`}
                   checked={destinationIds.includes(d.id)}
                   onCheckedChange={(v) => setDestinationIds((ids) => (v ? [...ids, d.id] : ids.filter((x) => x !== d.id)))}
                 />
-                <FieldContent>
-                  <FieldLabel htmlFor={`dest-${d.id}`}>{d.name}</FieldLabel>
-                  <FieldDescription className="truncate text-xs">{d.kind === 's3' ? d.summary : `local · ${d.summary}`}</FieldDescription>
-                </FieldContent>
-              </Field>
+                <EntityChip kind="destination" name={d.name} meta={PROVIDER_LABEL[d.provider]} size="sm" className="border-transparent bg-transparent px-0" />
+                <span className="text-muted-foreground ml-auto truncate font-mono text-xs">{d.summary}</span>
+              </label>
             ))}
           </div>
         </FieldSet>

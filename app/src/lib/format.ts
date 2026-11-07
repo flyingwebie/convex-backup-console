@@ -70,3 +70,13 @@ export function purgeSummary(p: PurgePolicy, subject = 'Their') {
   if (p.purge_local) return `${subject} backup files are deleted from local storage ${when(p.purge_local_days)}; remote copies are kept.`
   return `${subject} backup files are kept in remote and local storage.`
 }
+
+/** Short mono provider label for a destination's kind badge (EntityChip `meta`), e.g. `R2`, `S3`. */
+export const PROVIDER_LABEL: Record<string, string> = {
+  r2: 'R2',
+  aws: 'S3',
+  s3: 'S3',
+  b2: 'B2',
+  wasabi: 'Wasabi',
+  local: 'Local',
+}

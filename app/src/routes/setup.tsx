@@ -32,11 +32,28 @@ export const Route = createFileRoute('/setup')({
 
 type Setup = Awaited<ReturnType<typeof getSetup>>
 
+const STEP_VAULT = {
+  account: {
+    stage: 'empty' as const,
+    caption: 'Set up once. Every instance, job and destination you add becomes part of this picture.',
+  },
+  workspace: {
+    stage: 'instance' as const,
+    caption: 'Your workspace is where instances, storage, schedules and your team will live.',
+  },
+  team: {
+    stage: 'graph' as const,
+    caption: "Invite the people who'll run this with you — they'll see exactly this.",
+    members: { initials: ['A', 'J', 'M'], label: 'You + 2 invited' },
+  },
+}
+
 function Setup() {
   const { setup } = Route.useRouteContext()
   const step = setup.step as 'account' | 'workspace' | 'team'
+  const vault = STEP_VAULT[step]
   return (
-    <AuthShell wide top={<SetupSteps current={step} />}>
+    <AuthShell wide top={<SetupSteps current={step} />} vaultStage={vault.stage} vaultCaption={vault.caption} vaultMembers={'members' in vault ? vault.members : undefined}>
       {step === 'account' && <AccountStep />}
       {step === 'workspace' && <WorkspaceStep setup={setup} />}
       {step === 'team' && <TeamStep setup={setup} />}
@@ -115,7 +132,8 @@ function AccountStep() {
             <ErrorNote error={error} />
           </FieldGroup>
         </CardContent>
-        <CardFooter className="border-t">
+        <CardFooter className="justify-between border-t">
+          <span className="text-muted-foreground hidden text-xs sm:inline">Step 1 of 4</span>
           <Button type="submit" disabled={busy} className="w-full sm:w-auto">{busy ? 'Creating your account…' : 'Create admin account'}</Button>
         </CardFooter>
       </form>
@@ -232,7 +250,8 @@ function WorkspaceStep({ setup }: { setup: Setup }) {
             <ErrorNote error={error} />
           </FieldGroup>
         </CardContent>
-        <CardFooter className="border-t">
+        <CardFooter className="justify-between border-t">
+          <span className="text-muted-foreground hidden text-xs sm:inline">Step 3 of 4</span>
           <Button type="submit" disabled={busy || !name || !slug}>{busy ? 'Creating…' : 'Create workspace'}</Button>
         </CardFooter>
       </form>

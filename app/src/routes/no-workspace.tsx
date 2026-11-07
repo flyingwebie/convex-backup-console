@@ -21,7 +21,10 @@ function NoWorkspace() {
   const { app } = Route.useRouteContext()
   const [open, setOpen] = useState(false)
   return (
-    <AuthShell>
+    <AuthShell
+      vaultStage="disconnected"
+      vaultCaption="Nothing connected yet. Create a workspace to start protecting your first instance."
+    >
       <Card>
         <CardHeader className="text-center">
           <CardTitle>No workspace yet</CardTitle>

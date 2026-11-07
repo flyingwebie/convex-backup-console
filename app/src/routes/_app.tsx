@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useServerFn } from '@tanstack/react-start'
 import { Outlet, createFileRoute, redirect } from '@tanstack/react-router'
 import { AppSidebar } from '~/components/app-sidebar'
+import { CommandPaletteProvider } from '~/components/command-palette'
 import { SidebarInset, SidebarProvider } from '~/components/ui/sidebar'
 import { isTheme } from '~/lib/themes'
 import { startTour } from '~/lib/tour'
@@ -53,11 +54,13 @@ function AppLayout() {
     <SidebarProvider>
       {/* Applied before first paint on server-rendered loads, so the accent doesn't flash. */}
       <script dangerouslySetInnerHTML={{ __html: `document.documentElement.dataset.theme=${JSON.stringify(theme)}` }} />
-      <AppSidebar app={app} onTour={() => setTimeout(tour, 150)} />
-      <SidebarInset>
-        {/* Remount pages when switching workspace so no state leaks across. */}
-        <Outlet key={app.active?.id ?? 'none'} />
-      </SidebarInset>
+      <CommandPaletteProvider>
+        <AppSidebar app={app} onTour={() => setTimeout(tour, 150)} />
+        <SidebarInset>
+          {/* Remount pages when switching workspace so no state leaks across. */}
+          <Outlet key={app.active?.id ?? 'none'} />
+        </SidebarInset>
+      </CommandPaletteProvider>
     </SidebarProvider>
   )
 }

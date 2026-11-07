@@ -67,6 +67,27 @@ internet except through Cloudflare's login**, deploy `/app/docker-compose.tunnel
 3. Console → pick the client's workspace → **Instances → Add instance**: the instance's public API URL (`SERVICE_URL_BACKEND`) and the admin key.
 4. **Jobs → New job**: pick destinations, a schedule and retention.
 
+## Create a destination bucket for me
+
+**Destinations → Create bucket for me** provisions a Cloudflare R2 or AWS S3 bucket for you instead of
+pointing the console at one you made by hand:
+
+1. Paste a **one-time setup credential** — for R2, an API token with `Workers R2 Storage: Edit` +
+   `Account API Tokens: Edit`; for AWS, an IAM access key (the wizard shows the exact minimal policy to
+   attach to a throwaway IAM user).
+2. Pick a destination name, bucket name, region/jurisdiction, optional folder prefix, and optional
+   retention lock.
+3. The console creates the bucket, then mints a **brand-new credential scoped to only that bucket**
+   (an account-scoped Cloudflare token, or a least-privilege IAM user + access key) and saves the
+   destination using that new credential — never the setup one.
+4. A step-by-step log shows exactly what was created. If anything fails partway, the console rolls back
+   what it created in this run (the minted token/key, and the bucket if it created one and it's still
+   empty) and reports what was rolled back.
+
+The setup credential you pasted is used only for the duration of that request: it is never written to
+disk, logged, included in the audit log, or shown again. **Revoke or delete it** once the wizard finishes
+— the destination now has its own, narrower credential.
+
 ## Back up a Convex Cloud deployment
 
 Convex Cloud deployments are backed up with the same export/import API as self-hosted ones. Instead of

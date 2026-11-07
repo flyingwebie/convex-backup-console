@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Bell, Mail, MessageSquare, Plus, Send, Trash2, Webhook } from 'lucide-react'
+import { Bell, Mail, Plus, Send, Trash2, Webhook } from 'lucide-react'
 import { useState } from 'react'
 import { Confirm } from '~/components/confirm'
 import { PageBody, PageHeader } from '~/components/page'
@@ -17,6 +17,7 @@ import { Switch } from '~/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { useAction } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
+import { CHANNEL_PROVIDERS } from '~/components/provider-icons'
 import { addChannel, deleteChannel, getChannels, setChannelEvents, testChannel } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/notifications')({
@@ -25,9 +26,9 @@ export const Route = createFileRoute('/_app/notifications')({
 })
 
 const KINDS = {
-  discord: { label: 'Discord', icon: MessageSquare, hint: 'Server Settings → Integrations → Webhooks → New Webhook → Copy URL.' },
-  slack: { label: 'Slack', icon: MessageSquare, hint: 'Create an Incoming Webhook in your Slack app and paste its URL.' },
-  telegram: { label: 'Telegram', icon: Send, hint: 'Create a bot with @BotFather; get the chat ID by messaging the bot and opening getUpdates.' },
+  discord: { label: 'Discord', icon: CHANNEL_PROVIDERS.discord.icon, hint: 'Server Settings → Integrations → Webhooks → New Webhook → Copy URL.' },
+  slack: { label: 'Slack', icon: CHANNEL_PROVIDERS.slack.icon, hint: 'Create an Incoming Webhook in your Slack app and paste its URL.' },
+  telegram: { label: 'Telegram', icon: CHANNEL_PROVIDERS.telegram.icon, hint: 'Create a bot with @BotFather; get the chat ID by messaging the bot and opening getUpdates.' },
   webhook: { label: 'Generic webhook', icon: Webhook, hint: 'POSTs a JSON event: { type, status, title, details, console, at }.' },
 } as const
 type Kind = keyof typeof KINDS

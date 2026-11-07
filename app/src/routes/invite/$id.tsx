@@ -78,17 +78,17 @@ function Invite() {
   }
 
   const header = (
-    <CardHeader className="items-center text-center">
-      <WorkspaceLogo name={inv.workspace} logo={inv.logo} className="mx-auto mb-2 size-12 rounded-xl" />
-      <CardTitle className="text-xl">Join {inv.workspace}</CardTitle>
+    <CardHeader className="items-center border-b text-center">
+      <WorkspaceLogo name={inv.workspace} logo={inv.logo} className="mx-auto mb-3 size-16 rounded-xl text-2xl" />
+      <CardTitle className="text-2xl">Join {inv.workspace}</CardTitle>
       <CardDescription>
-        You're invited as <strong>{ROLE_INFO[inv.role as Role]?.label ?? inv.role}</strong> ({inv.email}).
+        You're invited as <strong className="text-foreground font-semibold">{ROLE_INFO[inv.role as Role]?.label ?? inv.role}</strong> ({inv.email}).
       </CardDescription>
     </CardHeader>
   )
 
   return (
-    <AuthShell>
+    <AuthShell vaultCaption={`Join ${inv.workspace} and pick up right where the team left off.`}>
       <Card>
         {header}
         <CardContent>

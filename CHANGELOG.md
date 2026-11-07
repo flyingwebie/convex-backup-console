@@ -3,6 +3,43 @@
 All notable changes to the Convex Backup Console. Versions follow [SemVer](https://semver.org); images are
 published as `ghcr.io/flyingwebie/convex-backup-console:<version>`.
 
+## 1.0.0-beta.3 — 2026-11-07
+
+### Added
+
+- **Create bucket for me:** Destinations → a wizard that provisions a Cloudflare R2 or AWS S3 bucket
+  from a one-time setup credential, then mints a brand-new credential scoped to only that bucket (an
+  R2 account token or a least-privilege IAM user) and saves it as a destination. Shows a step-by-step
+  progress log with timings and rolls back anything it created if a later step fails. The setup
+  credential is never persisted, logged, or shown again. When it's done, one click creates the first job
+  for the new destination.
+- **Topology map** on the Overview: instances → jobs → destinations, with each connection colored by its
+  last run (running connections animate) and hover to highlight one path.
+- **Command palette (⌘K / Ctrl+K):** jump to any page, instance, job or destination, and run quick actions
+  (new job, add destination, create a bucket, toggle theme).
+- **Run pipeline:** every backup shows its export → compress → encrypt → upload steps, expandable in the
+  table and in the run details.
+- **Restore lineage:** each restore shows the source backup connected to its target instance above the
+  live log.
+- **Retention timeline** on Storage (latest / daily / weekly / monthly copies per destination) and a
+  clickable chart legend to isolate one destination.
+- Workspace settings get a sticky section menu; workspaces show their accent color in the switcher.
+
+### Changed
+
+- **New design** across every screen: a calmer graphite palette in light and dark, Geist Mono for ids,
+  sizes, cron and logs, status colors used consistently everywhere, and linked chips that take you to the
+  related instance, job, destination or run.
+- Sign-in, verification, first-run setup and invites use a two-pane layout; the setup panel builds the
+  backup topology as you go.
+- Destinations show the provider, lock status and which jobs write to them; Instances show which jobs
+  back them up; Jobs show the instance → destination connection with the schedule and last result.
+- Notifications show Discord / Slack / Telegram logos; the product tour has a new look with step dots.
+
+### Fixed
+
+- A stray `0` could render in a restore card's footer.
+
 ## 1.0.0-beta.2 — 2026-10-18
 
 ### Added

@@ -1,10 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Cloud, HardDrive, Lock, MoreHorizontal, Plus, PlugZap, Trash2 } from 'lucide-react'
+import { Cloud, CloudCog, HardDrive, Lock, MoreHorizontal, Plus, PlugZap, Trash2 } from 'lucide-react'
+import { ProvisionWizard } from '~/components/provision-wizard'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import { Switch } from '~/components/ui/switch'
 import { Field as F2, FieldContent } from '~/components/ui/field'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { z } from 'zod'
 import { Confirm } from '~/components/confirm'
 import { PageBody, PageHeader } from '~/components/page'
 import { Badge } from '~/components/ui/badge'
@@ -20,16 +22,26 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~
 import { Tabs, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { useAction } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
+import { EntityChip } from '~/components/viz'
+import { STORAGE_PROVIDERS } from '~/components/provider-icons'
 import { addDestination, deleteDestination, getDestinations, testDestination } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/destinations')({
+  // `?action=add|provision` lets the ⌘K command palette deep-link into the matching dialog.
+  validateSearch: z.object({ action: z.enum(['add', 'provision']).optional() }),
   loader: () => getDestinations(),
   component: Destinations,
 })
 
 function Destinations() {
   const { destinations, jobs } = Route.useLoaderData()
+  const { action } = Route.useSearch()
   const [open, setOpen] = useState(false)
+  const [provisionOpen, setProvisionOpen] = useState(false)
+  useEffect(() => {
+    if (action === 'add') setOpen(true)
+    if (action === 'provision') setProvisionOpen(true)
+  }, [action])
   const test = useServerFn(testDestination)
   const del = useServerFn(deleteDestination)
   const { run } = useAction()
@@ -40,7 +52,14 @@ function Destinations() {
       <PageHeader
         title="Destinations"
         description="Where backups are stored. Use at least one off-site destination."
-        actions={allowed('manage') && <Button onClick={() => setOpen(true)}><Plus /> Add destination</Button>}
+        actions={
+          allowed('manage') && (
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setProvisionOpen(true)}><CloudCog /> Create bucket for me</Button>
+              <Button onClick={() => setOpen(true)}><Plus /> Add destination</Button>
+            </div>
+          )
+        }
       />
       <PageBody>
         {destinations.length === 0 ? (
@@ -50,7 +69,14 @@ function Destinations() {
               <EmptyTitle>No destinations yet</EmptyTitle>
               <EmptyDescription>Cloudflare R2, AWS S3, Backblaze B2, MinIO, or a volume on this server.</EmptyDescription>
             </EmptyHeader>
-            {allowed('manage') && <EmptyContent><Button onClick={() => setOpen(true)}><Plus /> Add destination</Button></EmptyContent>}
+            {allowed('manage') && (
+              <EmptyContent>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setProvisionOpen(true)}><CloudCog /> Create bucket for me</Button>
+                  <Button onClick={() => setOpen(true)}><Plus /> Add destination</Button>
+                </div>
+              </EmptyContent>
+            )}
           </Empty>
         ) : (
           <Card className="py-0">
@@ -67,24 +93,38 @@ function Destinations() {
               <TableBody>
                 {destinations.map((d) => {
                   const users = jobs.filter((j) => j.destination_ids.includes(d.id))
+                  const mark = d.kind === 'local' ? null : STORAGE_PROVIDERS[d.provider as keyof typeof STORAGE_PROVIDERS]
+                  const MarkIcon = mark?.icon
                   return (
                     <TableRow key={d.id}>
                       <TableCell className="pl-4 font-medium">{d.name}</TableCell>
                       <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          <Badge variant="secondary" className="gap-1">
-                            {d.kind === 's3' ? <Cloud className="size-3" /> : <HardDrive className="size-3" />}
-                            {d.kind === 's3' ? 'S3-compatible' : 'Local volume'}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant="secondary" className="gap-1.5">
+                            {d.kind === 'local' ? <HardDrive className="size-3" /> : MarkIcon ? <MarkIcon /> : <Cloud className="size-3" />}
+                            {d.kind === 'local' ? 'Local volume' : (mark?.label ?? 'S3-compatible')}
                           </Badge>
                           {d.objectLock && (
-                            <Badge variant="outline" className="gap-1 border-emerald-500/30 text-emerald-700 dark:text-emerald-400">
+                            <Badge variant="outline" className="gap-1 border-success/30 text-success">
                               <Lock className="size-3" /> Locked {d.objectLock.days}d · {d.objectLock.mode.toLowerCase()}
                             </Badge>
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-muted-foreground font-mono text-xs">{d.summary}</TableCell>
-                      <TableCell className="text-sm">{users.length ? users.map((j) => j.name).join(', ') : <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell className="text-muted-foreground font-mono text-xs">
+                        {d.kind === 'local' ? d.summary : `${d.bucket ?? d.summary}${d.region ? ' · ' + d.region : ''}`}
+                      </TableCell>
+                      <TableCell>
+                        {users.length === 0 ? (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {users.map((j) => (
+                              <EntityChip key={j.id} kind="job" name={j.name} to="/jobs" size="sm" />
+                            ))}
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell>
                         {allowed('run') && (
                         <DropdownMenu>
@@ -120,6 +160,7 @@ function Destinations() {
         )}
       </PageBody>
       {open && <DestinationDialog open onClose={() => setOpen(false)} />}
+      {provisionOpen && <ProvisionWizard open onClose={() => setProvisionOpen(false)} />}
     </>
   )
 }

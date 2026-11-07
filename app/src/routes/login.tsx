@@ -82,7 +82,7 @@ function Login() {
   return (
     <AuthShell>
       <Card>
-        <CardHeader className="text-center">
+        <CardHeader>
           <CardTitle className="text-xl">{step === 'totp' ? 'Two-factor code' : 'Sign in'}</CardTitle>
           <CardDescription>
             {step === 'totp' ? (useBackup ? 'Enter one of your backup codes.' : 'Enter the 6-digit code from your authenticator app.') : 'Access is limited to invited members.'}

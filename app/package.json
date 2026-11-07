@@ -10,13 +10,16 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-iam": "^3.1164.0",
     "@aws-sdk/client-s3": "^3.1151.0",
+    "@aws-sdk/client-sts": "^3.1164.0",
     "@aws-sdk/lib-storage": "^3.1151.0",
     "@better-auth/passkey": "1.7.8",
     "@better-auth/utils": "0.4.2",
     "@codemirror/lang-html": "^6.4.12",
     "@codemirror/lang-markdown": "^6.5.2",
     "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
     "@react-email/components": "^1.0.12",
     "@react-email/render": "^2.1.0",
     "@tailwindcss/vite": "^4.3.3",
@@ -27,6 +30,7 @@
     "better-auth": "^1.7.8",
     "better-sqlite3": "^13.0.3",
     "class-variance-authority": "^0.7.1",
+    "cmdk": "^1.1.1",
     "cn": "^0.4.0",
     "croner": "^10.0.1",
     "driver.js": "^1.10.0",
@@ -64,6 +68,7 @@
     "@types/yauzl": "^3.4.0",
     "@types/yazl": "^3.3.1",
     "@vitejs/plugin-react": "^6.1.2",
+    "playwright": "^1.65.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.4"
@@ -76,5 +81,5 @@
     ]
   },
   "packageManager": "pnpm@10.27.0",
-  "version": "1.0.0-beta.2"
+  "version": "1.0.0-beta.3"
 }
