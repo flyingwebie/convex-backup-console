@@ -106,6 +106,9 @@ Before a pull request from outside the project owner can be merged, the CLA bot 
 project owner the rights needed to maintain, relicense and (if ever needed) dual-license the project — it is
 **not** a copyright assignment; you keep your copyright. The CLA is pending a legal review before a 1.0 release.
 
+AI coding assistants credited in a `Co-Authored-By` trailer (e.g. Claude) and bots are exempt: the person who
+opens the pull request signs for the work they submit, including AI-assisted changes.
+
 ## Licence of contributions
 
 By contributing you agree that your contributions to code are licensed under the project's
