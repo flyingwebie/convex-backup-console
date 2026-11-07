@@ -4,6 +4,7 @@
 // inventing new ad-hoc widgets on a screen pass.
 export { StatusDot, type DotStatus } from './status-dot'
 export { EntityChip, BreadcrumbTrail } from './entity-chip'
+export { entityHref, type FocusableEntityKind } from './entity-href'
 export { NodeCard } from './node-card'
 export { PipelineSteps, type PipelineStepItem, type PipelineStepStatus } from './pipeline-steps'
 export { TopologyMap, type TopologyNode, type TopologyEdge, type EdgeHealth } from './topology-map'

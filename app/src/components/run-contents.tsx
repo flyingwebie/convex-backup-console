@@ -8,7 +8,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Skeleton } from '~/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { BreadcrumbTrail, EntityChip, PipelineSteps, type PipelineStepItem } from '~/components/viz'
-import { formatBytes, formatDate } from '~/lib/format'
+import { formatBytes, formatDate, stageDuration } from '~/lib/format'
 import { useAction } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
 import { getRunContents, inspectRun, type RunView } from '~/server/fns'
@@ -29,12 +29,24 @@ function Delta({ now, before }: { now: number; before: number | undefined }) {
   )
 }
 
+const STAGE_LABELS: Record<string, string> = { export: 'Export', compress: 'Compress', encrypt: 'Encrypt', upload: 'Upload', verify: 'Verify' }
+const STAGE_ORDER = ['export', 'compress', 'encrypt', 'upload', 'verify'] as const
+
 /**
- * Same honest derivation as the Runs table's mini pipeline strip (DESIGN.md §5.4) — no per-stage
- * timings are recorded by this backend, so the sheet header shows status only, never a faked
- * duration. Kept local (rather than imported from the route) to avoid a route→component import.
+ * Same mapping as the Runs table's mini pipeline strip (DESIGN.md §5.4). Runs with recorded
+ * per-stage timings (`run.stages`) show real durations and a real Verify step; older runs fall
+ * back to the honest status-only derivation — never a faked duration. Kept local (rather than
+ * imported from the route) to avoid a route→component import.
  */
 function deriveSteps(run: RunView): PipelineStepItem[] {
+  if (run.stages?.length) {
+    return STAGE_ORDER.map((id) => {
+      const s = run.stages!.find((x) => x.id === id)
+      if (!s) return { id, label: STAGE_LABELS[id], status: 'pending' as const }
+      const detail = s.status === 'failed' || s.status === 'skipped' ? s.detail : (stageDuration(s.startedAt, s.endedAt) ?? undefined)
+      return { id, label: STAGE_LABELS[id], status: s.status, detail }
+    })
+  }
   const copies = run.copies.filter((c) => !c.deleted)
   const anyFailed = copies.some((c) => c.status === 'failed')
   const allOk = copies.length > 0 && copies.every((c) => c.status === 'ok')
@@ -52,7 +64,7 @@ function deriveSteps(run: RunView): PipelineStepItem[] {
     { id: 'compress', label: 'Compress', status: 'done' },
     { id: 'encrypt', label: 'Encrypt', status: run.encrypted ? 'done' : 'skipped' },
     { id: 'upload', label: 'Upload', status: copies.length === 0 ? 'skipped' : anyFailed ? (allOk ? 'done' : 'failed') : 'done' },
-    { id: 'verify', label: 'Verify', status: 'skipped', detail: 'not tracked yet' },
+    { id: 'verify', label: 'Verify', status: 'skipped', detail: 'not recorded for this backup' },
   ]
 }
 

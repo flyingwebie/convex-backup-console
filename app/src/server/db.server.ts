@@ -255,6 +255,10 @@ function migrate(conn: Database.Database) {
   add('workspace_settings', 'email_smtp_enc', 'TEXT')
   add('workspace_settings', 'emails_migrated', 'INTEGER NOT NULL DEFAULT 0')
   add('instances', 'stale_alerted_at', 'INTEGER')
+  // Per-stage timings for the Runs pipeline strip: JSON array of { id, status, startedAt, endedAt?, detail? }.
+  // Written incrementally as a run progresses (so a running run shows the live active stage). Old runs keep
+  // this NULL and fall back to the status-only derivation.
+  add('runs', 'stages', 'TEXT')
   // Live restore log (shown as a terminal in Runs → Restores).
   conn.exec(`CREATE TABLE IF NOT EXISTS restore_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

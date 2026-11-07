@@ -46,7 +46,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
-import { duration, formatBytes, formatDate, timeAgo } from '~/lib/format'
+import { duration, formatBytes, formatDate, stageDuration, timeAgo } from '~/lib/format'
 import { cn } from '~/lib/utils'
 import { useAction, usePolling } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
@@ -86,17 +86,30 @@ function RunStatus({ status, label }: { status: RunView['status']; label?: strin
   )
 }
 
+const STAGE_LABELS: Record<string, string> = { export: 'Export', compress: 'Compress', encrypt: 'Encrypt', upload: 'Upload', verify: 'Verify' }
+const STAGE_ORDER = ['export', 'compress', 'encrypt', 'upload', 'verify'] as const
+
+/** Real per-stage timings recorded by backup.server.ts (`runs.stages`), with real durations ("12.4s"). */
+function stepsFromStages(stages: NonNullable<RunView['stages']>): PipelineStepItem[] {
+  return STAGE_ORDER.map((id) => {
+    const s = stages.find((x) => x.id === id)
+    if (!s) return { id, label: STAGE_LABELS[id], status: 'pending' as const }
+    const detail = s.status === 'failed' || s.status === 'skipped' ? s.detail : (stageDuration(s.startedAt, s.endedAt) ?? undefined)
+    return { id, label: STAGE_LABELS[id], status: s.status, detail }
+  })
+}
+
 /**
  * Honest run → PipelineStep mapping (DESIGN.md §5.4/§5.6: "map existing run statuses to pipeline
- * states honestly, don't fake timings"). The `runs`/`run_copies` tables don't record per-stage
- * timestamps, so we don't invent per-step durations the way the mockups show ("Export · 12s") —
- * only status is derived, from what's actually persisted: overall run status, whether the archive
- * was encrypted, and each destination's own copy status. Export/Compress always complete together
- * (the exporter streams straight into the zip); Encrypt is skipped when the job has no encryption
- * key; Upload reflects the worst per-destination copy status; Verify isn't tracked by this backend
- * at all today, so it's always rendered `skipped` rather than a faked `done`.
+ * states honestly, don't fake timings"). Runs made since per-stage tracking shipped carry real
+ * timings in `r.stages` (used via `stepsFromStages` above, including a live active step while the
+ * run is in progress and a real Verify stage). Older runs have `stages: null`; for those we fall
+ * back to deriving status only from what was persisted before: overall run status, whether the
+ * archive was encrypted, and each destination's own copy status — never a faked duration.
  */
 function deriveRunSteps(r: RunView): PipelineStepItem[] {
+  if (r.stages?.length) return stepsFromStages(r.stages)
+
   const copies = r.copies.filter((c) => !c.deleted)
   const anyUploadFailed = copies.some((c) => c.status === 'failed')
   const allUploadOk = copies.length > 0 && copies.every((c) => c.status === 'ok')
@@ -139,7 +152,7 @@ function deriveRunSteps(r: RunView): PipelineStepItem[] {
       status: copies.length === 0 ? (r.status === 'failed' ? 'failed' : 'skipped') : anyUploadFailed ? (allUploadOk ? 'done' : 'failed') : 'done',
       detail: anyUploadFailed ? copies.find((c) => c.status === 'failed')?.error ?? undefined : undefined,
     },
-    { id: 'verify', label: 'Verify', status: 'skipped', detail: 'not tracked yet' },
+    { id: 'verify', label: 'Verify', status: 'skipped', detail: 'not recorded for this backup' },
   ]
 }
 

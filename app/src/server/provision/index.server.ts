@@ -11,6 +11,7 @@ import { provisionAws, type AwsProvisionInput } from './aws.server'
 import { provisionR2, type R2ProvisionInput } from './r2.server'
 import type { ProvisionStep } from './helpers'
 import { withStepTimings } from './helpers'
+import { finishProvisionProgress, recordProvisionSteps, startProvisionProgress } from './progress.server'
 
 export type { ProvisionStep } from './helpers'
 
@@ -45,8 +46,23 @@ async function testWithBackoff(row: DestinationRow, steps: ProvisionStep[]) {
   }
 }
 
-export async function provisionDestination(workspaceId: string, actorEmail: string, input: ProvisionInput): Promise<ProvisionOutcome> {
+/**
+ * @param progressId When given (a client-generated `crypto.randomUUID()`), every step pushed to this
+ * run's `steps[]` is mirrored into the in-memory progress store as it happens, so a concurrent
+ * `getProvisionProgress({id: progressId})` poll can render it live instead of waiting for this whole
+ * (awaited) call to resolve. See progress.server.ts.
+ */
+export async function provisionDestination(workspaceId: string, actorEmail: string, input: ProvisionInput, progressId?: string): Promise<ProvisionOutcome> {
   const steps: ProvisionStep[] = withStepTimings([])
+  if (progressId) {
+    startProvisionProgress(workspaceId, progressId)
+    const timedPush = steps.push.bind(steps)
+    steps.push = (...items: ProvisionStep[]) => {
+      const result = timedPush(...items)
+      recordProvisionSteps(workspaceId, progressId, steps)
+      return result
+    }
+  }
   let rollback: (() => Promise<void>) | undefined
   try {
     let config: S3Config
@@ -105,5 +121,7 @@ export async function provisionDestination(workspaceId: string, actorEmail: stri
     return { ok: true, destinationId: id, steps, revokeNote }
   } catch (err) {
     return { ok: false, steps, error: err instanceof Error ? err.message : String(err) }
+  } finally {
+    if (progressId) finishProvisionProgress(workspaceId, progressId)
   }
 }

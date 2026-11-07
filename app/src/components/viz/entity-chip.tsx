@@ -21,6 +21,7 @@ export function EntityChip({
   name,
   meta,
   to,
+  search,
   status,
   size = 'md',
   className,
@@ -31,6 +32,10 @@ export function EntityChip({
   meta?: string
   /** When set, the chip navigates here (TanStack Link). */
   to?: string
+  /** Optional search params merged into the `Link` when `to` is set — e.g. `entityHref(kind, id).search`
+   * (`{ focus: id }`) to deep-link straight to this entity's row on its list page instead of just the
+   * bare list. Ignored when `to` is omitted. */
+  search?: Record<string, string>
   /** Optional status dot, e.g. an instance's reachability or a job's last-run health. */
   status?: DotStatus
   /** sm = inline in table cells/log lines, md = breadcrumb trail, lg = unused standalone size (see NodeCard for the lg lineage case). */
@@ -60,7 +65,7 @@ export function EntityChip({
 
   if (to) {
     return (
-      <Link to={to} className={cls}>
+      <Link to={to} search={search as never} className={cls}>
         {content}
       </Link>
     )

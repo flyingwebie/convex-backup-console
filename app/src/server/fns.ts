@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { can, ROLES } from '~/lib/permissions'
 import { THEMES } from '~/lib/themes'
 import { auth, createUserWithPassword, enabledProviders } from './auth.server'
-import { isInstanceBusy, startJob } from './backup.server'
+import { isInstanceBusy, startJob, type Stage } from './backup.server'
 import { ensureBooted } from './boot.server'
 import { ConvexAdmin, parseDeployKey, resolveCloudUrl } from './convex.server'
 import { decrypt, encrypt } from './crypto.server'
@@ -28,6 +28,7 @@ import { nextRun, syncSchedules } from './scheduler.server'
 import { openDestination, type DestinationRow } from './storage.server'
 import { validateBucketName } from './provision/helpers'
 import { provisionDestination as runProvisioning } from './provision/index.server'
+import { getProvisionProgress as readProvisionProgress } from './provision/progress.server'
 import { requirePlatformAdmin, requireWorkspace, resolveContext, workspaceSettings } from './workspace.server'
 import { onboardingState } from './setup.server'
 import { resetSecondFactors, stepUpWithTotp, upgradeAfterPasskeyRegistration } from './security.server'
@@ -177,6 +178,8 @@ function listRuns(ws: string, limit: number, jobId?: string, range: { from?: num
     sha256: (r.sha256 as string | null) ?? null,
     error: (r.error as string | null) ?? null,
     copies: (JSON.parse(String(r.copies)) as CopyRow[]).map((c) => ({ ...c, deleted: Boolean(c.deleted) })),
+    // Per-stage timings recorded by the pipeline (null for runs made before this was tracked).
+    stages: r.stages == null ? null : (JSON.parse(String(r.stages)) as Stage[]),
   }))
 }
 export type RunView = ReturnType<typeof listRuns>[number]
@@ -619,6 +622,9 @@ const provisionInput = z.discriminatedUnion('provider', [
     locationHint: z.string().trim().optional(),
     lockDays: z.number().int().min(1).max(3650).optional(),
     prefix: z.string().trim().optional(),
+    // Client-generated (crypto.randomUUID()) id this run's live progress is recorded under — see
+    // getProvisionProgress below and ./provision/progress.server.ts. Optional for back-compat.
+    progressId: z.string().trim().optional(),
   }),
   z.object({
     provider: z.literal('aws'),
@@ -630,6 +636,7 @@ const provisionInput = z.discriminatedUnion('provider', [
     bucket: z.string().trim().min(1),
     prefix: z.string().trim().optional(),
     lock: z.object({ mode: z.enum(['GOVERNANCE', 'COMPLIANCE']), days: z.number().int().min(1).max(3650) }).optional(),
+    progressId: z.string().trim().optional(),
   }),
 ])
 
@@ -644,7 +651,20 @@ export const provisionDestination = createServerFn({ method: 'POST' })
     const { ws, user } = await requireWorkspace('manage')
     const bucketError = validateBucketName(data.provider, data.bucket)
     if (bucketError) throw new Error(`Invalid bucket name: ${bucketError}`)
-    return runProvisioning(ws.id, user.email, data)
+    const { progressId, ...rest } = data
+    return runProvisioning(ws.id, user.email, rest, progressId)
+  })
+
+/**
+ * Polls the live progress of a `provisionDestination` run started with the same `progressId`. Scoped
+ * to the caller's workspace (same `requireWorkspace('manage')` gate as starting a run) on top of the
+ * store's own per-workspace key, so another workspace can never read it even if it guessed the id.
+ */
+export const getProvisionProgress = createServerFn({ method: 'GET' })
+  .validator(parse(z.object({ id: z.string().trim().min(1) })))
+  .handler(async ({ data }) => {
+    const { ws } = await requireWorkspace('manage')
+    return readProvisionProgress(ws.id, data.id) ?? { steps: [], done: false }
   })
 
 // ── Jobs ─────────────────────────────────────────────────────

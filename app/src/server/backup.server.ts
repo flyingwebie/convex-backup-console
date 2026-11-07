@@ -15,6 +15,50 @@ import { selectToKeep } from './retention'
 import { openDestination, type DestinationRow } from './storage.server'
 import { inspectZip, sha256File } from './zip.server'
 
+// ── Per-stage timings ───────────────────────────────────────
+// Persisted to `runs.stages` as the run progresses, so a running run shows its live active stage and
+// a finished one shows real per-step durations. Mirrors the pipeline strip's step ids in runs.tsx.
+
+export type StageId = 'export' | 'compress' | 'encrypt' | 'upload' | 'verify'
+export type StageStatus = 'active' | 'done' | 'failed' | 'skipped'
+export type Stage = { id: StageId; status: StageStatus; startedAt: number; endedAt?: number; detail?: string }
+
+class StageTracker {
+  private stages: Stage[] = []
+  constructor(private runId: string) {}
+  private save() {
+    db().prepare('UPDATE runs SET stages = ? WHERE id = ?').run(JSON.stringify(this.stages), this.runId)
+  }
+  start(id: StageId) {
+    this.stages.push({ id, status: 'active', startedAt: Date.now() })
+    this.save()
+  }
+  end(id: StageId, status: Exclude<StageStatus, 'active'> = 'done', detail?: string) {
+    const s = [...this.stages].reverse().find((x) => x.id === id)
+    if (s) {
+      s.status = status
+      s.endedAt = Date.now()
+      if (detail) s.detail = detail
+    }
+    this.save()
+  }
+  skip(id: StageId, detail?: string) {
+    const now = Date.now()
+    this.stages.push({ id, status: 'skipped', startedAt: now, endedAt: now, detail })
+    this.save()
+  }
+  /** Marks whatever stage is still active as failed — used when the run throws mid-stage. */
+  failActive(message: string) {
+    const active = this.stages.find((x) => x.status === 'active')
+    if (active) {
+      active.status = 'failed'
+      active.endedAt = Date.now()
+      active.detail = message
+    }
+    this.save()
+  }
+}
+
 type JobRow = {
   id: string
   workspace_id: string
@@ -50,10 +94,12 @@ export function startJob(jobId: string, trigger: string): string {
     .prepare('INSERT INTO runs (id, workspace_id, job_id, instance_id, trigger, status, started_at, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     .run(runId, job.workspace_id, job.id, job.instance_id, trigger, 'running', Date.now(), job.encrypt)
   running.set(job.instance_id, runId)
-  void runJob(runId, job)
+  const stages = new StageTracker(runId)
+  void runJob(runId, job, stages)
     .catch(async (err: unknown) => {
       release(job.instance_id, runId)
       const message = err instanceof Error ? err.message : String(err)
+      stages.failActive(message)
       db().prepare('UPDATE runs SET status = ?, error = ?, finished_at = ? WHERE id = ?').run('failed', message, Date.now(), runId)
       audit(job.workspace_id, 'system', 'backup.failed', { runId, jobId: job.id, error: message })
       await notify(job.workspace_id, { type: 'backup', status: 'failed', title: `Backup failed: ${job.name}`, details: [message] })
@@ -63,13 +109,14 @@ export function startJob(jobId: string, trigger: string): string {
   return runId
 }
 
-async function runJob(runId: string, job: JobRow) {
+async function runJob(runId: string, job: JobRow, stages: StageTracker) {
   const instance = db().prepare('SELECT * FROM instances WHERE id = ?').get(job.instance_id) as InstanceRow
   const destinations = db()
     .prepare('SELECT d.* FROM destinations d JOIN job_destinations jd ON jd.destination_id = d.id WHERE jd.job_id = ? AND d.deleted_at IS NULL')
     .all(job.id) as DestinationRow[]
   if (destinations.length === 0) throw new Error('Job has no destinations')
 
+  stages.start('export')
   const convex = new ConvexAdmin(instance.url, decrypt(instance.admin_key_enc))
   const snapshot = await convex.exportAndWait(job.include_storage === 1)
 
@@ -81,10 +128,22 @@ async function runJob(runId: string, job: JobRow) {
     const res = await convex.downloadExport(snapshot.start_ts)
     if (!res.body) throw new Error('Export download returned no body')
     await pipeline(Readable.fromWeb(res.body as WebReadableStream), fs.createWriteStream(zipFile))
+    stages.end('export')
+
+    stages.start('compress')
     // Manifest of what's inside (tables, row counts, files) for browsing, comparing and partial restores.
     const manifest = await inspectZip(zipFile).catch(() => null)
     if (manifest) manifest.convexVersion = await convex.version().catch(() => undefined)
-    if (job.encrypt) await encryptFile(job.workspace_id, zipFile, uploadFile)
+    stages.end('compress')
+
+    if (job.encrypt) {
+      stages.start('encrypt')
+      await encryptFile(job.workspace_id, zipFile, uploadFile)
+      stages.end('encrypt')
+    } else {
+      stages.skip('encrypt')
+    }
+
     const { size } = await fs.promises.stat(uploadFile)
     const sha256 = await sha256File(uploadFile)
     db().prepare('UPDATE runs SET manifest = ?, sha256 = ? WHERE id = ?').run(manifest ? JSON.stringify(manifest) : null, sha256, runId)
@@ -92,16 +151,45 @@ async function runJob(runId: string, job: JobRow) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const key = `${slug(instance.name)}/${stamp}.zip${job.encrypt ? '.age' : ''}`
     const failures: string[] = []
+    const uploadErrors: string[] = []
+    const copies: { dest: DestinationRow; versionId?: string }[] = []
+    stages.start('upload')
     for (const dest of destinations) {
       try {
         const put = await openDestination(dest).put(key, uploadFile)
         insertCopy(runId, dest.id, key, 'ok', null, put.versionId, put.lockedUntil)
+        copies.push({ dest, versionId: put.versionId })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         insertCopy(runId, dest.id, key, 'failed', message)
         failures.push(`${dest.name}: ${message}`)
+        uploadErrors.push(`${dest.name}: ${message}`)
       }
     }
+    stages.end('upload', uploadErrors.length ? 'failed' : 'done', uploadErrors.join('; ') || undefined)
+    if (copies.length === 0) {
+      stages.skip('verify', 'No successful uploads to verify')
+      throw new Error(`Upload failed on every destination — ${failures.join('; ')}`)
+    }
+
+    // Verify every copy that reported a successful upload: confirm the stored object exists and its
+    // size matches the file we uploaded. A verification failure demotes that copy to 'failed', exactly
+    // like an upload failure — the run can still end 'partial' if other destinations verified fine.
+    stages.start('verify')
+    const verifyErrors: string[] = []
+    for (const { dest, versionId } of copies) {
+      try {
+        await openDestination(dest).verify(key, size, versionId)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        db()
+          .prepare('UPDATE run_copies SET status = ?, error = ? WHERE run_id = ? AND destination_id = ?')
+          .run('failed', `Verification failed: ${message}`, runId, dest.id)
+        failures.push(`${dest.name}: Verification failed: ${message}`)
+        verifyErrors.push(`${dest.name}: ${message}`)
+      }
+    }
+    stages.end('verify', verifyErrors.length ? 'failed' : 'done', verifyErrors.join('; ') || undefined)
     if (failures.length === destinations.length) throw new Error(`Upload failed on every destination — ${failures.join('; ')}`)
 
     // Only clean up the source once we hold at least one copy.

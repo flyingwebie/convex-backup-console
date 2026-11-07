@@ -4,7 +4,7 @@ import { CloudCog, CornerDownLeft, HardDrive, Moon, Plus, Sun, UserRound } from 
 import { useTheme } from 'next-themes'
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { nav } from '~/components/app-sidebar'
-import { ENTITY_ICON, ENTITY_TINT, type EntityKind } from '~/components/viz'
+import { ENTITY_ICON, ENTITY_TINT, entityHref, type FocusableEntityKind } from '~/components/viz'
 import {
   CommandDialog,
   CommandEmpty,
@@ -95,10 +95,10 @@ function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const jumpResults = useMemo(() => {
     if (!entities || query.trim().length === 0) return []
     const q = query.trim().toLowerCase()
-    const rows: { kind: EntityKind; id: string; name: string; meta: string; to: string }[] = []
-    for (const i of entities.instances) if (i.name.toLowerCase().includes(q)) rows.push({ kind: 'instance', id: i.id, name: i.name, meta: i.meta, to: '/instances' })
-    for (const j of entities.jobs) if (j.name.toLowerCase().includes(q)) rows.push({ kind: 'job', id: j.id, name: j.name, meta: j.meta, to: '/jobs' })
-    for (const d of entities.destinations) if (d.name.toLowerCase().includes(q)) rows.push({ kind: 'destination', id: d.id, name: d.name, meta: d.meta, to: '/destinations' })
+    const rows: { kind: FocusableEntityKind; id: string; name: string; meta: string }[] = []
+    for (const i of entities.instances) if (i.name.toLowerCase().includes(q)) rows.push({ kind: 'instance', id: i.id, name: i.name, meta: i.meta })
+    for (const j of entities.jobs) if (j.name.toLowerCase().includes(q)) rows.push({ kind: 'job', id: j.id, name: j.name, meta: j.meta })
+    for (const d of entities.destinations) if (d.name.toLowerCase().includes(q)) rows.push({ kind: 'destination', id: d.id, name: d.name, meta: d.meta })
     return rows.slice(0, 8)
   }, [entities, query])
 
@@ -110,14 +110,19 @@ function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (
         {jumpResults.length > 0 && (
           <>
             <CommandGroup heading="Jump to">
-              {jumpResults.map((r) => (
-                <CommandItem key={`${r.kind}-${r.id}`} value={`jump-${r.kind}-${r.name}`} onSelect={() => go(r.to)}>
-                  <PaletteIcon icon={ENTITY_ICON[r.kind]} tint={ENTITY_TINT[r.kind]} />
-                  <span className="truncate">{r.name}</span>
-                  <span className="text-muted-foreground ml-1.5 truncate font-mono text-xs">{r.meta}</span>
-                  <span className="text-muted-foreground ml-auto text-xs capitalize">{r.kind}</span>
-                </CommandItem>
-              ))}
+              {jumpResults.map((r) => {
+                // `entityHref` deep-links to the matching row (`?focus=<id>`), not just the bare list —
+                // the target page scrolls to it and flashes it briefly (see useFocusRow).
+                const href = entityHref(r.kind, r.id)
+                return (
+                  <CommandItem key={`${r.kind}-${r.id}`} value={`jump-${r.kind}-${r.name}`} onSelect={() => go(href.to, href.search)}>
+                    <PaletteIcon icon={ENTITY_ICON[r.kind]} tint={ENTITY_TINT[r.kind]} />
+                    <span className="truncate">{r.name}</span>
+                    <span className="text-muted-foreground ml-1.5 truncate font-mono text-xs">{r.meta}</span>
+                    <span className="text-muted-foreground ml-auto text-xs capitalize">{r.kind}</span>
+                  </CommandItem>
+                )
+              })}
             </CommandGroup>
             <CommandSeparator />
           </>

@@ -22,20 +22,27 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~
 import { Tabs, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { useAction } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
-import { EntityChip } from '~/components/viz'
+import { cn } from '~/lib/utils'
+import type { Action } from '~/lib/permissions'
+import { EntityChip, entityHref } from '~/components/viz'
+import { useFocusRow } from '~/hooks/use-focus-row'
 import { STORAGE_PROVIDERS } from '~/components/provider-icons'
 import { addDestination, deleteDestination, getDestinations, testDestination } from '~/server/fns'
 
 export const Route = createFileRoute('/_app/destinations')({
-  // `?action=add|provision` lets the ⌘K command palette deep-link into the matching dialog.
-  validateSearch: z.object({ action: z.enum(['add', 'provision']).optional() }),
+  // `?action=add|provision` lets the ⌘K command palette deep-link into the matching dialog;
+  // `?focus=<id>` (also from the palette's "Jump to" results, via entityHref) scrolls that
+  // destination's row into view and flashes it — see useFocusRow.
+  validateSearch: z.object({ action: z.enum(['add', 'provision']).optional(), focus: z.string().optional() }),
   loader: () => getDestinations(),
   component: Destinations,
 })
 
+type Data = Awaited<ReturnType<typeof getDestinations>>
+
 function Destinations() {
   const { destinations, jobs } = Route.useLoaderData()
-  const { action } = Route.useSearch()
+  const { action, focus } = Route.useSearch()
   const [open, setOpen] = useState(false)
   const [provisionOpen, setProvisionOpen] = useState(false)
   useEffect(() => {
@@ -91,69 +98,18 @@ function Destinations() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {destinations.map((d) => {
-                  const users = jobs.filter((j) => j.destination_ids.includes(d.id))
-                  const mark = d.kind === 'local' ? null : STORAGE_PROVIDERS[d.provider as keyof typeof STORAGE_PROVIDERS]
-                  const MarkIcon = mark?.icon
-                  return (
-                    <TableRow key={d.id}>
-                      <TableCell className="pl-4 font-medium">{d.name}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Badge variant="secondary" className="gap-1.5">
-                            {d.kind === 'local' ? <HardDrive className="size-3" /> : MarkIcon ? <MarkIcon /> : <Cloud className="size-3" />}
-                            {d.kind === 'local' ? 'Local volume' : (mark?.label ?? 'S3-compatible')}
-                          </Badge>
-                          {d.objectLock && (
-                            <Badge variant="outline" className="gap-1 border-success/30 text-success">
-                              <Lock className="size-3" /> Locked {d.objectLock.days}d · {d.objectLock.mode.toLowerCase()}
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground font-mono text-xs">
-                        {d.kind === 'local' ? d.summary : `${d.bucket ?? d.summary}${d.region ? ' · ' + d.region : ''}`}
-                      </TableCell>
-                      <TableCell>
-                        {users.length === 0 ? (
-                          <span className="text-muted-foreground text-sm">—</span>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {users.map((j) => (
-                              <EntityChip key={j.id} kind="job" name={j.name} to="/jobs" size="sm" />
-                            ))}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {allowed('run') && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" aria-label="Actions"><MoreHorizontal /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => run(() => test({ data: { id: d.id } }), { success: `${d.name} is reachable and writable` })}>
-                              <PlugZap /> Test access
-                            </DropdownMenuItem>
-                            {allowed('manage') && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <Confirm
-                                  trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Move to trash</DropdownMenuItem>}
-                                  title={`Delete ${d.name}?`}
-                                  description="Jobs stop sending backups here. It stays in the Trash until the grace period ends. Files already stored in it are never deleted."
-                                  action="Move to trash"
-                                  onConfirm={() => run(() => del({ data: { id: d.id } }), { success: `${d.name} moved to trash` })}
-                                />
-                              </>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
+                {destinations.map((d) => (
+                  <DestinationRow
+                    key={d.id}
+                    d={d}
+                    users={jobs.filter((j) => j.destination_ids.includes(d.id))}
+                    focus={focus}
+                    allowed={allowed}
+                    run={run}
+                    test={test}
+                    del={del}
+                  />
+                ))}
               </TableBody>
             </Table>
           </Card>
@@ -162,6 +118,89 @@ function Destinations() {
       {open && <DestinationDialog open onClose={() => setOpen(false)} />}
       {provisionOpen && <ProvisionWizard open onClose={() => setProvisionOpen(false)} />}
     </>
+  )
+}
+
+/** One row of the destinations table, split out so `useFocusRow` (called here, not inside the
+ * `.map()` in `Destinations`) keeps a stable hook-call count across renders even as the destination
+ * list's length changes. */
+function DestinationRow({
+  d,
+  users,
+  focus,
+  allowed,
+  run,
+  test,
+  del,
+}: {
+  d: Data['destinations'][number]
+  users: Data['jobs'][number][]
+  focus: string | undefined
+  allowed: (action: Action) => boolean
+  run: ReturnType<typeof useAction>['run']
+  test: ReturnType<typeof useServerFn<typeof testDestination>>
+  del: ReturnType<typeof useServerFn<typeof deleteDestination>>
+}) {
+  const mark = d.kind === 'local' ? null : STORAGE_PROVIDERS[d.provider as keyof typeof STORAGE_PROVIDERS]
+  const MarkIcon = mark?.icon
+  const { ref, highlight } = useFocusRow<HTMLTableRowElement>(d.id, focus)
+  return (
+    <TableRow ref={ref} className={cn(highlight && 'bg-primary/10 ring-2 ring-inset ring-primary/50 transition-colors duration-700')}>
+      <TableCell className="pl-4 font-medium">{d.name}</TableCell>
+      <TableCell>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="secondary" className="gap-1.5">
+            {d.kind === 'local' ? <HardDrive className="size-3" /> : MarkIcon ? <MarkIcon /> : <Cloud className="size-3" />}
+            {d.kind === 'local' ? 'Local volume' : (mark?.label ?? 'S3-compatible')}
+          </Badge>
+          {d.objectLock && (
+            <Badge variant="outline" className="gap-1 border-success/30 text-success">
+              <Lock className="size-3" /> Locked {d.objectLock.days}d · {d.objectLock.mode.toLowerCase()}
+            </Badge>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="text-muted-foreground font-mono text-xs">
+        {d.kind === 'local' ? d.summary : `${d.bucket ?? d.summary}${d.region ? ' · ' + d.region : ''}`}
+      </TableCell>
+      <TableCell>
+        {users.length === 0 ? (
+          <span className="text-muted-foreground text-sm">—</span>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {users.map((j) => (
+              <EntityChip key={j.id} kind="job" name={j.name} {...entityHref('job', j.id)} size="sm" />
+            ))}
+          </div>
+        )}
+      </TableCell>
+      <TableCell>
+        {allowed('run') && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Actions"><MoreHorizontal /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => run(() => test({ data: { id: d.id } }), { success: `${d.name} is reachable and writable` })}>
+              <PlugZap /> Test access
+            </DropdownMenuItem>
+            {allowed('manage') && (
+              <>
+                <DropdownMenuSeparator />
+                <Confirm
+                  trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Move to trash</DropdownMenuItem>}
+                  title={`Delete ${d.name}?`}
+                  description="Jobs stop sending backups here. It stays in the Trash until the grace period ends. Files already stored in it are never deleted."
+                  action="Move to trash"
+                  onConfirm={() => run(() => del({ data: { id: d.id } }), { success: `${d.name} moved to trash` })}
+                />
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        )}
+      </TableCell>
+    </TableRow>
   )
 }
 

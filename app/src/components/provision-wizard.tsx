@@ -1,6 +1,6 @@
 import { useServerFn } from '@tanstack/react-start'
 import { useRouter } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, ChevronDown, CloudCog, ExternalLink, Loader2, ShieldAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~
 import { AwsIcon, CloudflareIcon } from '~/components/provider-icons'
 import { cn } from '~/lib/utils'
 import { buildAwsSetupPolicy, validateBucketName, type ProvisionStep } from '~/server/provision/helpers'
-import { getDestinations, provisionDestination } from '~/server/fns'
+import { getDestinations, getProvisionProgress, provisionDestination } from '~/server/fns'
 
 type Provider = 'r2' | 'aws'
 type Outcome = Awaited<ReturnType<typeof provisionDestination>>
@@ -63,6 +63,7 @@ function fmtMs(ms: number | undefined): string {
 export function ProvisionWizard({ open, onClose }: { open: boolean; onClose: () => void }) {
   const run = useServerFn(provisionDestination)
   const fetchDestinations = useServerFn(getDestinations)
+  const fetchProgress = useServerFn(getProvisionProgress)
   const router = useRouter()
   const [step, setStep] = useState(0)
   const [provider, setProvider] = useState<Provider>('r2')
@@ -70,6 +71,36 @@ export function ProvisionWizard({ open, onClose }: { open: boolean; onClose: () 
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [created, setCreated] = useState<NewDestination | null>(null)
   const [showSteps, setShowSteps] = useState(false)
+  // Live steps polled from getProvisionProgress while `running` — see start() and the polling effect
+  // below. Cleared to [] at the start of every run; superseded by outcome.steps once the awaited
+  // provisionDestination call itself resolves.
+  const [liveSteps, setLiveSteps] = useState<ProvisionStep[]>([])
+  const progressId = useRef<string | null>(null)
+
+  // Polls getProvisionProgress every ~500ms for the duration of the (separately awaited)
+  // provisionDestination call, so the pipeline below fills in live instead of jumping straight to the
+  // final result. Mirrors RestoreTerminal's polling style (restore-terminal.tsx).
+  useEffect(() => {
+    if (!running || !progressId.current) return
+    const id = progressId.current
+    let stop = false
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      try {
+        const res = await fetchProgress({ data: { id } })
+        if (stop) return
+        setLiveSteps(res.steps)
+      } catch {
+        // Transient network hiccup — just retry on the next tick.
+      }
+      if (!stop) timer = setTimeout(tick, 500)
+    }
+    void tick()
+    return () => {
+      stop = true
+      clearTimeout(timer)
+    }
+  }, [running])
 
   // R2 fields
   const [r2AccountId, setR2AccountId] = useState('')
@@ -98,9 +129,14 @@ export function ProvisionWizard({ open, onClose }: { open: boolean; onClose: () 
     setCreated(null)
     setShowSteps(false)
     setRunning(false)
+    setLiveSteps([])
+    progressId.current = null
   }
 
   async function start() {
+    const id = crypto.randomUUID()
+    progressId.current = id
+    setLiveSteps([])
     setStep(3)
     setRunning(true)
     try {
@@ -116,6 +152,7 @@ export function ProvisionWizard({ open, onClose }: { open: boolean; onClose: () 
                 jurisdiction: r2Jurisdiction,
                 lockDays: r2LockDays ? Number(r2LockDays) : undefined,
                 prefix: prefix || undefined,
+                progressId: id,
               }
             : {
                 provider: 'aws',
@@ -127,6 +164,7 @@ export function ProvisionWizard({ open, onClose }: { open: boolean; onClose: () 
                 bucket,
                 prefix: prefix || undefined,
                 lock: awsLock ? { mode: awsLockMode, days: Number(awsLockDays) } : undefined,
+                progressId: id,
               },
       })
       setOutcome(result)
@@ -356,6 +394,7 @@ export function ProvisionWizard({ open, onClose }: { open: boolean; onClose: () 
             region={provider === 'aws' ? awsRegion : undefined}
             running={running}
             outcome={outcome}
+            liveSteps={liveSteps}
           />
         )}
 
@@ -496,16 +535,21 @@ function ProgressView({
   region,
   running,
   outcome,
+  liveSteps,
 }: {
   provider: Provider
   region?: string
   running: boolean
   outcome: Outcome | null
+  /** Polled from getProvisionProgress while the request is in flight (see start()'s polling effect);
+   * superseded by outcome.steps once the awaited provisionDestination call itself resolves. */
+  liveSteps: ProvisionStep[]
 }) {
   type Row = { id: string; label: string; status: ProvisionStep['status'] | 'pending'; detail?: string; ms?: number }
   const plan = STEP_PLAN[provider]
-  const byId = new Map((outcome?.steps ?? []).filter((s) => !s.id.startsWith('rollback-')).map((s) => [s.id, s]))
-  const rollbackSteps = (outcome?.steps ?? []).filter((s) => s.id.startsWith('rollback-'))
+  const steps = outcome?.steps ?? liveSteps
+  const byId = new Map(steps.filter((s) => !s.id.startsWith('rollback-')).map((s) => [s.id, s]))
+  const rollbackSteps = steps.filter((s) => s.id.startsWith('rollback-'))
   const failed = outcome !== null && !outcome.ok
 
   let doneCount = 0

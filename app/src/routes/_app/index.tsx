@@ -139,6 +139,14 @@ function Overview() {
                 <Legend color="bg-muted-foreground/40" label="No runs" />
               </div>
             </CardAction>
+            {/* Mobile: the legend moves into normal flow below the description (no room for it
+                beside the title), wrapping onto its own line(s) instead of living in CardAction. */}
+            <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:hidden">
+              <Legend color="bg-success" label="Succeeded" />
+              <Legend color="bg-danger" label="Failed" />
+              <Legend color="bg-running" label="Running" />
+              <Legend color="bg-muted-foreground/40" label="No runs" />
+            </div>
           </CardHeader>
           <CardContent>
             <TopologyMap instances={instanceNodes} jobs={jobNodes} destinations={destinationNodes} edges={data.edges} />
@@ -193,7 +201,41 @@ function Overview() {
             </CardAction>
           </CardHeader>
           <CardContent className="px-0 pb-0">
-            <Table>
+            {/* Mobile: stacked cards, same pattern as Runs (DESIGN.md: table rows don't survive 390px). */}
+            <div className="flex flex-col gap-3 px-4 pb-4 sm:hidden">
+              {data.instances.map((i) => {
+                const jobs = data.jobs.filter((j) => j.instance_id === i.id)
+                return (
+                  <Card key={i.id} className="gap-2 p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 font-medium">{i.name} <InstanceKindBadge kind={i.kind} type={i.deployment_type} /></div>
+                        <div className="text-muted-foreground truncate font-mono text-xs">{i.url}</div>
+                      </div>
+                      {i.busy ? <StatusBadge status="running" label="Backing up" /> : i.restoring ? <StatusBadge status="running" label="Restoring" /> : i.last_status ? <StatusBadge status={i.last_status} /> : <span className="text-muted-foreground shrink-0 text-xs">No backups yet</span>}
+                    </div>
+                    <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                      <span className={i.last_ok_at && Date.now() - i.last_ok_at > STALE_MS ? 'text-warning' : undefined}>
+                        Last good backup: {timeAgo(i.last_ok_at)}
+                      </span>
+                      <span>Jobs: {jobs.length ? jobs.map((j) => j.name).join(', ') : '—'}</span>
+                    </div>
+                    {jobs[0] && allowed('run') && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="self-start"
+                        disabled={pending || i.busy}
+                        onClick={() => run(() => runNow({ data: { id: jobs[0].id } }), { success: `Backup of ${i.name} started` })}
+                      >
+                        <Play /> Run {jobs.length > 1 ? jobs[0].name : 'now'}
+                      </Button>
+                    )}
+                  </Card>
+                )
+              })}
+            </div>
+            <Table className="hidden sm:table">
               <TableHeader>
                 <TableRow>
                   <TableHead className="pl-6">Instance</TableHead>

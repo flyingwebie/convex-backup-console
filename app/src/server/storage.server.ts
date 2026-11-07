@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
-import { DeleteObjectCommand, GetObjectCommand, GetObjectLockConfigurationCommand, HeadBucketCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, GetObjectCommand, GetObjectLockConfigurationCommand, HeadBucketCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 import { decrypt } from './crypto.server'
 
@@ -35,6 +35,8 @@ export interface Destination {
   put(key: string, file: string): Promise<PutResult>
   delete(key: string, versionId?: string | null): Promise<void>
   get(key: string): Promise<Readable>
+  /** Confirms the stored object matches what was uploaded. Throws with a clear message on mismatch. */
+  verify(key: string, expectedSize: number, versionId?: string | null): Promise<void>
 }
 
 export function openDestination(row: DestinationRow): Destination {
@@ -99,6 +101,17 @@ class S3Destination implements Destination {
   async delete(key: string, versionId?: string | null) {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.cfg.bucket, Key: this.fullKey(key), VersionId: versionId ?? undefined }))
   }
+  /** HeadObject on the uploaded key (pinned to the version the upload returned, when known) and compares size. */
+  async verify(key: string, expectedSize: number, versionId?: string | null) {
+    const res = await this.client
+      .send(new HeadObjectCommand({ Bucket: this.cfg.bucket, Key: this.fullKey(key), VersionId: versionId ?? undefined }))
+      .catch((err: unknown) => {
+        throw new Error(`Could not find the uploaded object to verify it (${err instanceof Error ? err.message : String(err)})`)
+      })
+    if (res.ContentLength !== expectedSize) {
+      throw new Error(`Uploaded object size mismatch: expected ${expectedSize} bytes, found ${res.ContentLength ?? 'unknown'}`)
+    }
+  }
 }
 
 class LocalDestination implements Destination {
@@ -127,5 +140,12 @@ class LocalDestination implements Destination {
   }
   async delete(key: string) {
     await fs.promises.rm(this.resolve(key), { force: true })
+  }
+  /** Stats the file and compares its size with what was uploaded. */
+  async verify(key: string, expectedSize: number) {
+    const stat = await fs.promises.stat(this.resolve(key)).catch((err: unknown) => {
+      throw new Error(`Could not find the stored file to verify it (${err instanceof Error ? err.message : String(err)})`)
+    })
+    if (stat.size !== expectedSize) throw new Error(`Stored file size mismatch: expected ${expectedSize} bytes, found ${stat.size}`)
   }
 }

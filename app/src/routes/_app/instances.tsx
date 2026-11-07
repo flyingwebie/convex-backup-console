@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
 import { Cloud, Database, Info, MoreHorizontal, Pencil, Plus, PlugZap, Server, Trash2 } from 'lucide-react'
 import { useState } from 'react'
+import { z } from 'zod'
 import { Confirm } from '~/components/confirm'
 import { InstanceKindBadge } from '~/components/instance-kind'
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
@@ -18,7 +19,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~
 import { timeAgo } from '~/lib/format'
 import { useAction, usePolling } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
-import { EntityChip, type DotStatus, StatusDot } from '~/components/viz'
+import { cn } from '~/lib/utils'
+import type { Action } from '~/lib/permissions'
+import { EntityChip, entityHref, type DotStatus, StatusDot } from '~/components/viz'
+import { useFocusRow } from '~/hooks/use-focus-row'
 import { addInstance, deleteInstance, getInstances, testInstance, updateInstance } from '~/server/fns'
 
 /** Maps an instance's live/last-run state to the semantic Status Dot vocabulary (DESIGN.md §5.3) —
@@ -39,14 +43,19 @@ function instanceStatus(i: { busy: boolean; restoring: boolean; last_status: str
 }
 
 export const Route = createFileRoute('/_app/instances')({
+  // `?focus=<id>` (from the ⌘K palette's "Jump to" results, via entityHref) scrolls that instance's
+  // row into view and flashes it — see useFocusRow.
+  validateSearch: z.object({ focus: z.string().optional() }),
   loader: () => getInstances(),
   component: Instances,
 })
 
 type Instance = Awaited<ReturnType<typeof getInstances>>['instances'][number]
+type Job = Awaited<ReturnType<typeof getInstances>>['jobs'][number]
 
 function Instances() {
   const { instances, jobs } = Route.useLoaderData()
+  const { focus } = Route.useSearch()
   const [editing, setEditing] = useState<Instance | 'new' | null>(null)
   const test = useServerFn(testInstance)
   const del = useServerFn(deleteInstance)
@@ -86,67 +95,19 @@ function Instances() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {instances.map((i) => {
-                  const instanceJobs = jobs.filter((j) => j.instance_id === i.id)
-                  const { status, label } = instanceStatus(i)
-                  return (
-                    <TableRow key={i.id}>
-                      <TableCell className="pl-4">
-                        <div className="font-medium">{i.name}</div>
-                        {i.deployment_name && <div className="text-muted-foreground font-mono text-xs">{i.deployment_name}</div>}
-                      </TableCell>
-                      <TableCell><InstanceKindBadge kind={i.kind} type={i.deployment_type} /></TableCell>
-                      <TableCell className="text-muted-foreground max-w-[260px] truncate font-mono text-xs" title={i.url}>
-                        {i.url}
-                      </TableCell>
-                      <TableCell>
-                        <span className="inline-flex items-center gap-1.5 text-sm">
-                          <StatusDot status={status} />
-                          {label}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">{timeAgo(i.last_ok_at)}</TableCell>
-                      <TableCell>
-                        {instanceJobs.length === 0 ? (
-                          <span className="text-muted-foreground text-sm">—</span>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {instanceJobs.map((j) => (
-                              <EntityChip key={j.id} kind="job" name={j.name} to="/jobs" size="sm" />
-                            ))}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {allowed('run') && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" aria-label="Actions"><MoreHorizontal /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => run(() => test({ data: { id: i.id } }), { success: (r) => `${i.name} is reachable (Convex ${r.version})` })}>
-                              <PlugZap /> Test connection
-                            </DropdownMenuItem>
-                            {allowed('manage') && (
-                              <>
-                                <DropdownMenuItem onClick={() => setEditing(i)}><Pencil /> Edit</DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <Confirm
-                                  trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Move to trash</DropdownMenuItem>}
-                                  title={`Delete ${i.name}?`}
-                                  description={`The instance and its ${instanceJobs.length} job${instanceJobs.length === 1 ? '' : 's'} move to the Trash and can be restored until the workspace's grace period ends.`}
-                                  action="Move to trash"
-                                  onConfirm={() => run(() => del({ data: { id: i.id } }), { success: `${i.name} moved to trash` })}
-                                />
-                              </>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
+                {instances.map((i) => (
+                  <InstanceRow
+                    key={i.id}
+                    i={i}
+                    instanceJobs={jobs.filter((j) => j.instance_id === i.id)}
+                    focus={focus}
+                    allowed={allowed}
+                    run={run}
+                    test={test}
+                    del={del}
+                    onEdit={() => setEditing(i)}
+                  />
+                ))}
               </TableBody>
             </Table>
           </Card>
@@ -154,6 +115,89 @@ function Instances() {
       </PageBody>
       {editing && <InstanceDialog instance={editing} onClose={() => setEditing(null)} />}
     </>
+  )
+}
+
+/** One row of the instances table, split out so `useFocusRow` (called here, not inside the `.map()`
+ * in `Instances`) keeps a stable hook-call count across renders even as the instance list's length
+ * changes. */
+function InstanceRow({
+  i,
+  instanceJobs,
+  focus,
+  allowed,
+  run,
+  test,
+  del,
+  onEdit,
+}: {
+  i: Instance
+  instanceJobs: Job[]
+  focus: string | undefined
+  allowed: (action: Action) => boolean
+  run: ReturnType<typeof useAction>['run']
+  test: ReturnType<typeof useServerFn<typeof testInstance>>
+  del: ReturnType<typeof useServerFn<typeof deleteInstance>>
+  onEdit: () => void
+}) {
+  const { status, label } = instanceStatus(i)
+  const { ref, highlight } = useFocusRow<HTMLTableRowElement>(i.id, focus)
+  return (
+    <TableRow ref={ref} className={cn(highlight && 'bg-primary/10 ring-2 ring-inset ring-primary/50 transition-colors duration-700')}>
+      <TableCell className="pl-4">
+        <div className="font-medium">{i.name}</div>
+        {i.deployment_name && <div className="text-muted-foreground font-mono text-xs">{i.deployment_name}</div>}
+      </TableCell>
+      <TableCell><InstanceKindBadge kind={i.kind} type={i.deployment_type} /></TableCell>
+      <TableCell className="text-muted-foreground max-w-[260px] truncate font-mono text-xs" title={i.url}>
+        {i.url}
+      </TableCell>
+      <TableCell>
+        <span className="inline-flex items-center gap-1.5 text-sm">
+          <StatusDot status={status} />
+          {label}
+        </span>
+      </TableCell>
+      <TableCell className="text-muted-foreground text-sm">{timeAgo(i.last_ok_at)}</TableCell>
+      <TableCell>
+        {instanceJobs.length === 0 ? (
+          <span className="text-muted-foreground text-sm">—</span>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {instanceJobs.map((j) => (
+              <EntityChip key={j.id} kind="job" name={j.name} {...entityHref('job', j.id)} size="sm" />
+            ))}
+          </div>
+        )}
+      </TableCell>
+      <TableCell>
+        {allowed('run') && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Actions"><MoreHorizontal /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => run(() => test({ data: { id: i.id } }), { success: (r) => `${i.name} is reachable (Convex ${r.version})` })}>
+              <PlugZap /> Test connection
+            </DropdownMenuItem>
+            {allowed('manage') && (
+              <>
+                <DropdownMenuItem onClick={onEdit}><Pencil /> Edit</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <Confirm
+                  trigger={<DropdownMenuItem variant="destructive" onSelect={(e) => e.preventDefault()}><Trash2 /> Move to trash</DropdownMenuItem>}
+                  title={`Delete ${i.name}?`}
+                  description={`The instance and its ${instanceJobs.length} job${instanceJobs.length === 1 ? '' : 's'} move to the Trash and can be restored until the workspace's grace period ends.`}
+                  action="Move to trash"
+                  onConfirm={() => run(() => del({ data: { id: i.id } }), { success: `${i.name} moved to trash` })}
+                />
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        )}
+      </TableCell>
+    </TableRow>
   )
 }
 
