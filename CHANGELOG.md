@@ -3,6 +3,12 @@
 All notable changes to the Convex Backup Console. Versions follow [SemVer](https://semver.org); images are
 published as `ghcr.io/flyingwebie/convex-backup-console:<version>`.
 
+## Unreleased
+
+### Changed
+
+- **Licence:** AGPL-3.0-or-later from this release (earlier releases remain MIT); contributions require the CLA.
+
 ## 1.0.0-beta.2 — 2026-10-18
 
 ### Added

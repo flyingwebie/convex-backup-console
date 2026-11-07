@@ -19,7 +19,11 @@ Thanks for helping make Convex backups safer! Bug reports, docs fixes, templates
 | `convex-instance.coolify.yaml` | Coolify template for a self-hosted Convex instance |
 | `render.yaml`, `app/railway.json`, `app/fly.toml` | One-click / config-as-code deploys ([docs/deploy.md](docs/deploy.md)) |
 | `.github/actions/convex-backup` | GitHub Action that triggers a backup before `npx convex deploy` |
-| `docs/` | Guides and images |
+| `.github/workflows/ci.yml` | Pull request / push CI: typecheck, test, build, Docker build, dependency licence check |
+| `.github/workflows/cla.yml` | CLA Assistant Lite bot |
+| `lefthook.yml` | Git hook definitions (pre-commit, commit-msg, pre-push) |
+| `CLA.md` | Contributor License Agreement |
+| `docs/` | Guides and images (CC BY 4.0, see [`docs/LICENSE`](docs/LICENSE)) |
 | `testing/` | Local Docker kit and Playwright end-to-end tests |
 | `legacy/` | The old all-in-one instance compose (kept for existing deployments, not developed) |
 
@@ -69,4 +73,41 @@ Images are built for amd64 and arm64 by `.github/workflows/backup-console.yml` a
 to `main`, CI publishes the `X.Y.Z` image tag, tags the commit `console-vX.Y.Z` and creates the GitHub release
 (notes from the changelog; versions with a `-` suffix are marked pre-release).
 
-By contributing you agree that your contributions are licensed under the [MIT License](LICENSE).
+## CI
+
+Pull requests to `main` and pushes to `main` run three checks (job names `checks`, `docker` and `licenses`
+in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+
+- **checks** — `pnpm typecheck`, `pnpm test` and `pnpm build` in `app/`.
+- **docker** — builds the `app/Dockerfile` image (no push) to catch build breakage.
+- **licenses** — runs [`app/scripts/check-licenses.mjs`](app/scripts/check-licenses.mjs) over production
+  dependencies and fails on licences incompatible with AGPL-3.0-or-later (SSPL, BUSL/BSL, Commons Clause,
+  Elastic License, non-commercial licences, GPL-2.0-only, proprietary/unlicensed packages). Unknown licences are
+  reported as warnings. If a flagged dependency is actually fine, add it to
+  [`app/scripts/license-allowlist.json`](app/scripts/license-allowlist.json) with a short reason.
+
+All three are required status checks before merging.
+
+## Git hooks
+
+Hooks are managed by [lefthook](https://lefthook.dev) and installed automatically by `pnpm install` in `app/`
+(the `prepare` script runs `lefthook install`; it's a no-op outside a git work tree, e.g. in the Docker build).
+
+- **pre-commit** — typecheck on staged `app/**/*.{ts,tsx}` changes.
+- **commit-msg** — validates the Gitmoji + Conventional Commits format described under Conventions above.
+- **pre-push** — `pnpm test` and `pnpm build`.
+
+Skip hooks in an emergency with `LEFTHOOK=0 git commit …` / `LEFTHOOK=0 git push …`. Please don't make this a habit.
+
+## Contributor License Agreement (CLA)
+
+Before a pull request from outside the project owner can be merged, the CLA bot asks you to sign the
+[Contributor License Agreement](CLA.md) by commenting the sign phrase it posts on your PR. This grants the
+project owner the rights needed to maintain, relicense and (if ever needed) dual-license the project — it is
+**not** a copyright assignment; you keep your copyright. The CLA is pending a legal review before a 1.0 release.
+
+## Licence of contributions
+
+By contributing you agree that your contributions to code are licensed under the project's
+[AGPL-3.0-or-later License](LICENSE), and your contributions to `docs/` and this README under
+[CC BY 4.0](docs/LICENSE) — both subject to the [CLA](CLA.md).
