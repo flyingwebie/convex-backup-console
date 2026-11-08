@@ -31,6 +31,15 @@ export function duration(start: number, end: number | null) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
+/** Mono step-duration label, e.g. "12.4s" or "1m 05s" — one decimal under a minute, since pipeline stages are often sub-minute. */
+export function stageDuration(start: number, end: number | null | undefined) {
+  if (end == null) return null
+  const s = (end - start) / 1000
+  if (s < 60) return `${s.toFixed(1)}s`
+  const whole = Math.round(s)
+  return `${Math.floor(whole / 60)}m ${String(whole % 60).padStart(2, '0')}s`
+}
+
 const PRESETS: Record<string, string> = {
   '0 * * * *': 'Every hour',
   '0 */6 * * *': 'Every 6 hours',
@@ -69,4 +78,14 @@ export function purgeSummary(p: PurgePolicy, subject = 'Their') {
   if (p.purge_remote) return `${subject} backup files are deleted from remote storage ${when(p.purge_remote_days)}; local copies are kept.`
   if (p.purge_local) return `${subject} backup files are deleted from local storage ${when(p.purge_local_days)}; remote copies are kept.`
   return `${subject} backup files are kept in remote and local storage.`
+}
+
+/** Short mono provider label for a destination's kind badge (EntityChip `meta`), e.g. `R2`, `S3`. */
+export const PROVIDER_LABEL: Record<string, string> = {
+  r2: 'R2',
+  aws: 'S3',
+  s3: 'S3',
+  b2: 'B2',
+  wasabi: 'Wasabi',
+  local: 'Local',
 }

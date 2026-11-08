@@ -8,12 +8,15 @@ import { getRestoreLog } from '~/server/fns'
 type Line = Awaited<ReturnType<typeof getRestoreLog>>['lines'][number]
 type Status = 'running' | 'ok' | 'failed'
 
+// Log-level colors map to the console's semantic status tokens, not raw ANSI green/red — the
+// terminal is meant to look like this console's own chrome, not a generic emulator
+// (DESIGN.md §3 "RestoreTerminal ... log-level colors mapped to --info/--success/--warning/--danger").
 const LEVEL: Record<Line['level'], string> = {
-  info: 'text-zinc-200',
-  dim: 'text-zinc-500',
-  success: 'text-emerald-400',
-  warn: 'text-amber-300',
-  error: 'text-red-400',
+  info: 'text-info',
+  dim: 'text-muted-foreground',
+  success: 'text-success',
+  warn: 'text-warning',
+  error: 'text-danger',
 }
 
 const clock = (at: number) => new Date(at).toLocaleTimeString('en-GB', { hour12: false })
@@ -110,27 +113,27 @@ export function RestoreTerminal({
   const running = status === 'running'
 
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-200 shadow-inner">
-      <div className="flex items-center gap-3 border-b border-zinc-800 bg-zinc-900/80 px-3 py-2">
+    <div className="overflow-hidden rounded-lg border bg-background text-foreground shadow-inner">
+      <div className="bg-muted/60 flex items-center gap-3 border-b px-3 py-2">
         <div className="flex gap-1.5" aria-hidden>
-          <span className="size-2.5 rounded-full bg-red-500/80" />
-          <span className="size-2.5 rounded-full bg-amber-400/80" />
-          <span className="size-2.5 rounded-full bg-emerald-500/80" />
+          <span className="bg-danger/70 size-2.5 rounded-full" />
+          <span className="bg-warning/70 size-2.5 rounded-full" />
+          <span className="bg-success/70 size-2.5 rounded-full" />
         </div>
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-400">{title}</span>
+        <span className="text-muted-foreground min-w-0 flex-1 truncate font-mono text-xs">{title}</span>
         <span
           className={cn(
             'flex items-center gap-1.5 font-mono text-[11px]',
-            running ? 'text-sky-400' : status === 'ok' ? 'text-emerald-400' : 'text-red-400',
+            running ? 'text-running' : status === 'ok' ? 'text-success' : 'text-danger',
           )}
         >
           <span className={cn('size-1.5 rounded-full bg-current', running && 'animate-pulse')} />
           {running ? 'running' : status === 'ok' ? 'done' : 'failed'}
-          {now != null && <span className="text-zinc-500">· {elapsed((end ?? now) - startedAt)}</span>}
+          {now != null && <span className="text-muted-foreground">· {elapsed((end ?? now) - startedAt)}</span>}
         </span>
         <button
           type="button"
-          className="rounded p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+          className="text-muted-foreground hover:bg-accent hover:text-foreground rounded p-1 transition"
           title="Copy log"
           onClick={() => {
             void navigator.clipboard.writeText(text)
@@ -151,22 +154,22 @@ export function RestoreTerminal({
         }}
         className="max-h-96 min-h-32 overflow-auto px-3 py-2 font-mono text-[11.5px] leading-5"
       >
-        {!loaded && lines.length === 0 && <div className="text-zinc-500">Connecting…</div>}
+        {!loaded && lines.length === 0 && <div className="text-muted-foreground">Connecting…</div>}
         {loaded && lines.length === 0 && (
-          <div className="whitespace-pre text-zinc-500">
+          <div className="text-muted-foreground whitespace-pre">
             {fallback ? fallback : running ? 'Waiting for output…' : 'No log was recorded for this restore.'}
           </div>
         )}
         {lines.map((l) => (
-          <div key={l.id} className="flex gap-3 whitespace-pre">
-            <span className="shrink-0 text-zinc-600 select-none">{clock(l.at)}</span>
+          <div key={l.id} className={cn('flex gap-3 whitespace-pre', l.level === 'warn' && 'bg-warning-muted -mx-3 px-3')}>
+            <span className="text-muted-foreground/70 shrink-0 select-none">{clock(l.at)}</span>
             <span className={LEVEL[l.level]}>{l.text || ' '}</span>
           </div>
         ))}
         {running && (
           <div className="flex gap-3">
-            <span className="shrink-0 text-zinc-600 select-none">{now != null ? clock(now) : ''}</span>
-            <span className="inline-block h-4 w-2 animate-pulse bg-zinc-300" />
+            <span className="text-muted-foreground/70 shrink-0 select-none">{now != null ? clock(now) : ''}</span>
+            <span className="bg-foreground inline-block h-4 w-2 animate-pulse" />
           </div>
         )}
       </div>

@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { can, ROLES } from '~/lib/permissions'
 import { THEMES } from '~/lib/themes'
 import { auth, createUserWithPassword, enabledProviders } from './auth.server'
-import { isInstanceBusy, startJob } from './backup.server'
+import { isInstanceBusy, startJob, type Stage } from './backup.server'
 import { ensureBooted } from './boot.server'
 import { ConvexAdmin, parseDeployKey, resolveCloudUrl } from './convex.server'
 import { decrypt, encrypt } from './crypto.server'
@@ -26,6 +26,9 @@ import { deleteRun as deleteRunNow, purgeItem, purgeWorkspace, restoreItem, rest
 import { isRestoring, startRestore } from './restore.server'
 import { nextRun, syncSchedules } from './scheduler.server'
 import { openDestination, type DestinationRow } from './storage.server'
+import { validateBucketName } from './provision/helpers'
+import { provisionDestination as runProvisioning } from './provision/index.server'
+import { getProvisionProgress as readProvisionProgress } from './provision/progress.server'
 import { requirePlatformAdmin, requireWorkspace, resolveContext, workspaceSettings } from './workspace.server'
 import { onboardingState } from './setup.server'
 import { resetSecondFactors, stepUpWithTotp, upgradeAfterPasskeyRegistration } from './security.server'
@@ -175,6 +178,8 @@ function listRuns(ws: string, limit: number, jobId?: string, range: { from?: num
     sha256: (r.sha256 as string | null) ?? null,
     error: (r.error as string | null) ?? null,
     copies: (JSON.parse(String(r.copies)) as CopyRow[]).map((c) => ({ ...c, deleted: Boolean(c.deleted) })),
+    // Per-stage timings recorded by the pipeline (null for runs made before this was tracked).
+    stages: r.stages == null ? null : (JSON.parse(String(r.stages)) as Stage[]),
   }))
 }
 export type RunView = ReturnType<typeof listRuns>[number]
@@ -220,10 +225,31 @@ function describeDestination(d: DestinationRow) {
   return d.kind === 'local' ? String(cfg.root) : `${cfg.endpoint || 'AWS S3'} · ${cfg.bucket}${cfg.prefix ? '/' + cfg.prefix : ''}`
 }
 
+/** S3-compatible provider inferred from the endpoint — drives the provider mark shown in the UI. */
+export type DestinationProvider = 'r2' | 'aws' | 'b2' | 'wasabi' | 's3' | 'local'
+function detectProvider(kind: string, endpoint: string | undefined): DestinationProvider {
+  if (kind === 'local') return 'local'
+  if (!endpoint) return 'aws'
+  if (endpoint.includes('r2.cloudflarestorage.com')) return 'r2'
+  if (endpoint.includes('backblazeb2.com')) return 'b2'
+  if (endpoint.includes('wasabisys.com')) return 'wasabi'
+  return 's3'
+}
+
 function listDestinations(ws: string) {
   return (db().prepare('SELECT * FROM destinations WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY name').all(ws) as DestinationRow[]).map((d) => {
-    const cfg = JSON.parse(d.config) as { objectLock?: { mode: string; days: number }; pricePerGbMonth?: number; endpoint?: string }
-    return { id: d.id, name: d.name, kind: d.kind, summary: describeDestination(d), objectLock: cfg.objectLock ?? null, price: priceFor(d.kind, cfg) }
+    const cfg = JSON.parse(d.config) as { objectLock?: { mode: string; days: number }; pricePerGbMonth?: number; endpoint?: string; region?: string; bucket?: string }
+    return {
+      id: d.id,
+      name: d.name,
+      kind: d.kind,
+      summary: describeDestination(d),
+      objectLock: cfg.objectLock ?? null,
+      price: priceFor(d.kind, cfg),
+      provider: detectProvider(d.kind, cfg.endpoint),
+      region: cfg.region ?? null,
+      bucket: cfg.bucket ?? null,
+    }
   })
 }
 
@@ -250,14 +276,22 @@ function listJobs(ws: string) {
       enabled: number
       destination_ids: string | null
     }[]
-  ).map((j) => ({
-    ...j,
-    include_storage: Boolean(j.include_storage),
-    encrypt: Boolean(j.encrypt),
-    enabled: Boolean(j.enabled),
-    destination_ids: j.destination_ids ? j.destination_ids.split(',') : [],
-    next_run: j.enabled && j.cron ? nextRun(j.cron, tz) : null,
-  }))
+  ).map((j) => {
+    const last = db()
+      .prepare("SELECT status FROM runs WHERE job_id = ? AND status != 'running' ORDER BY started_at DESC LIMIT 1")
+      .get(j.id) as { status: string } | undefined
+    return {
+      ...j,
+      include_storage: Boolean(j.include_storage),
+      encrypt: Boolean(j.encrypt),
+      enabled: Boolean(j.enabled),
+      destination_ids: j.destination_ids ? j.destination_ids.split(',') : [],
+      next_run: j.enabled && j.cron ? nextRun(j.cron, tz) : null,
+      // Last-run outcome (DESIGN.md §8: "inline last-run StatusDot next to next run"). `null` means
+      // no completed run has been recorded yet for this job.
+      last_status: (last?.status as 'ok' | 'partial' | 'failed' | undefined) ?? null,
+    }
+  })
 }
 export type JobView = ReturnType<typeof listJobs>[number]
 
@@ -573,6 +607,64 @@ export const deleteDestination = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const { ws, user } = await requireWorkspace('manage')
     await softDelete(ws.id, 'destination', data.id, user.email)
+  })
+
+// ── Destination auto-provisioning ("Create bucket for me") ───
+
+const provisionInput = z.discriminatedUnion('provider', [
+  z.object({
+    provider: z.literal('r2'),
+    name: z.string().trim().min(1).max(80),
+    accountId: z.string().trim().min(1),
+    setupToken: z.string().trim().min(1),
+    bucket: z.string().trim().min(1),
+    jurisdiction: z.enum(['default', 'eu', 'fedramp']).default('default'),
+    locationHint: z.string().trim().optional(),
+    lockDays: z.number().int().min(1).max(3650).optional(),
+    prefix: z.string().trim().optional(),
+    // Client-generated (crypto.randomUUID()) id this run's live progress is recorded under — see
+    // getProvisionProgress below and ./provision/progress.server.ts. Optional for back-compat.
+    progressId: z.string().trim().optional(),
+  }),
+  z.object({
+    provider: z.literal('aws'),
+    name: z.string().trim().min(1).max(80),
+    accessKeyId: z.string().trim().min(1),
+    secretAccessKey: z.string().trim().min(1),
+    sessionToken: z.string().trim().optional(),
+    region: z.string().trim().min(1),
+    bucket: z.string().trim().min(1),
+    prefix: z.string().trim().optional(),
+    lock: z.object({ mode: z.enum(['GOVERNANCE', 'COMPLIANCE']), days: z.number().int().min(1).max(3650) }).optional(),
+    progressId: z.string().trim().optional(),
+  }),
+])
+
+/**
+ * Creates a cloud bucket and scoped credentials for the caller, then saves it as a destination exactly
+ * like the manual flow. The one-time setup credential in `data` never leaves this call: it isn't stored,
+ * logged, included in the audit entry, or returned to the client.
+ */
+export const provisionDestination = createServerFn({ method: 'POST' })
+  .validator(parse(provisionInput))
+  .handler(async ({ data }) => {
+    const { ws, user } = await requireWorkspace('manage')
+    const bucketError = validateBucketName(data.provider, data.bucket)
+    if (bucketError) throw new Error(`Invalid bucket name: ${bucketError}`)
+    const { progressId, ...rest } = data
+    return runProvisioning(ws.id, user.email, rest, progressId)
+  })
+
+/**
+ * Polls the live progress of a `provisionDestination` run started with the same `progressId`. Scoped
+ * to the caller's workspace (same `requireWorkspace('manage')` gate as starting a run) on top of the
+ * store's own per-workspace key, so another workspace can never read it even if it guessed the id.
+ */
+export const getProvisionProgress = createServerFn({ method: 'GET' })
+  .validator(parse(z.object({ id: z.string().trim().min(1) })))
+  .handler(async ({ data }) => {
+    const { ws } = await requireWorkspace('manage')
+    return readProvisionProgress(ws.id, data.id) ?? { steps: [], done: false }
   })
 
 // ── Jobs ─────────────────────────────────────────────────────
@@ -1133,12 +1225,12 @@ export const getPlatform = createServerFn({ method: 'GET' }).handler(async () =>
   await requirePlatformAdmin()
   const workspaces = db()
     .prepare(
-      `SELECT o.id, o.name, o.slug, o.logo, s.deleted_at, s.trash_days,
+      `SELECT o.id, o.name, o.slug, o.logo, s.deleted_at, s.trash_days, s.theme,
          (SELECT COUNT(*) FROM member m WHERE m.organizationId = o.id) AS members,
          (SELECT COUNT(*) FROM instances i WHERE i.workspace_id = o.id AND i.deleted_at IS NULL) AS instances
        FROM organization o LEFT JOIN workspace_settings s ON s.workspace_id = o.id ORDER BY o.name`,
     )
-    .all() as { id: string; name: string; slug: string; logo: string | null; deleted_at: number | null; trash_days: number; members: number; instances: number }[]
+    .all() as { id: string; name: string; slug: string; logo: string | null; deleted_at: number | null; trash_days: number; theme: string | null; members: number; instances: number }[]
   const withPurge = workspaces.map((w) => ({ ...w, purge_at: w.deleted_at ? w.deleted_at + workspaceGraceDays(w.id) * 86_400_000 : null }))
   const users = db()
     .prepare(

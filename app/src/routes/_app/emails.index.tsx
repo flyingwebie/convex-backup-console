@@ -84,33 +84,65 @@ function recipientSummary(r: RouteData | null, direct: boolean) {
   return parts.length ? parts.join(', ') : 'Nobody'
 }
 
+/** "AR MK JS" avatar-stack + role chips used in the Templates list to show who gets an email at a
+ * glance, without the user reading a sentence of prose (design pass: Emails list). Falls back to
+ * nothing when the route is disabled or has no recipients — that state is communicated by the
+ * dimmed row + "Off"/"Recipients off" label instead. */
+function RecipientGlance({ route, members, direct }: { route: RouteData | null; members: Data['members']; direct: boolean }) {
+  if (!route || direct || !route.enabled) return null
+  const memberInitials = route.members
+    .map((id) => members.find((m) => m.id === id))
+    .filter((m): m is Data['members'][number] => Boolean(m))
+    .slice(0, 3)
+  if (memberInitials.length === 0 && route.roles.length === 0) return null
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {memberInitials.map((m) => (
+        <span key={m.id} className="bg-muted text-muted-foreground flex size-5 items-center justify-center rounded-full text-[10px] font-medium uppercase" title={m.email}>
+          {(m.name || m.email).slice(0, 2)}
+        </span>
+      ))}
+      {route.roles.map((r) => (
+        <Badge key={r} variant="secondary" className="text-[11px]">{ROLE_INFO[r as Role].label}s</Badge>
+      ))}
+    </div>
+  )
+}
+
 function Templates({ data }: { data: Data }) {
   return (
     <div className="space-y-6">
-      {GROUPS.map((g) => (
+      {GROUPS.map((g) => {
+        const types = data.types.filter((t) => t.group === g)
+        return (
         <Card key={g} className="gap-0 py-0">
-          <CardHeader className="border-b py-4">
-            <CardTitle className="text-base">{g}</CardTitle>
+          <CardHeader className="flex-row items-center justify-between gap-3 border-b py-4">
+            <div>
+              <CardTitle className="text-base">{g}</CardTitle>
+              <CardDescription>{GROUP_HINT[g]}</CardDescription>
+            </div>
+            <span className="text-muted-foreground font-mono text-xs">{types.length} template{types.length === 1 ? '' : 's'}</span>
           </CardHeader>
           <ul className="divide-y">
-            {data.types
-              .filter((t) => t.group === g)
-              .map((t) => (
-                <li key={t.type} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-6 py-4">
+            {types.map((t) => {
+                const off = t.route ? !t.route.enabled : false
+                return (
+                <li key={t.type} className={`flex flex-wrap items-center gap-x-4 gap-y-2 px-6 py-4 ${off ? 'opacity-50' : ''}`}>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">{t.label}</span>
                       {sourceBadge(t)}
-                      {t.route && !t.route.enabled && <Badge variant="outline">Off</Badge>}
+                      {off && <Badge variant="outline">Off</Badge>}
                     </div>
                     <p className="text-muted-foreground mt-0.5 text-sm">{t.description}</p>
                     {t.route && (
                       <p className="text-muted-foreground mt-1 text-xs">
-                        To: {recipientSummary(t.route, t.direct)}
+                        {off ? 'Recipients off' : recipientSummary(t.route, t.direct)}
                         {t.route.count != null && t.route.enabled && ` · ${t.route.count} recipient${t.route.count === 1 ? '' : 's'} now`}
                         {t.updated_at && ` · edited ${timeAgo(t.updated_at)} by ${t.updated_by}`}
                       </p>
                     )}
+                    <RecipientGlance route={t.route} members={data.members} direct={t.direct} />
                   </div>
                   {data.canManage && (
                     <Button asChild variant="outline" size="sm">
@@ -120,12 +152,21 @@ function Templates({ data }: { data: Data }) {
                     </Button>
                   )}
                 </li>
-              ))}
+                )
+              })}
           </ul>
         </Card>
-      ))}
+        )
+      })}
     </div>
   )
+}
+
+const GROUP_HINT: Record<(typeof GROUPS)[number], string> = {
+  Backups: 'Sent when a scheduled or manual run finishes, fails, or goes quiet.',
+  Restores: 'Receipts for anything that writes data back into an instance.',
+  Reports: 'Scheduled summaries — nothing urgent, just the shape of the week.',
+  'Team & access': 'Account and membership events. Recipients are fixed by the event itself.',
 }
 
 function Recipients({ data }: { data: Data }) {

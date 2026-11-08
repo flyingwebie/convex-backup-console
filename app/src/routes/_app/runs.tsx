@@ -1,6 +1,26 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Activity, ArrowDown, ArrowRight, ChevronDown, Database, HardDrive, SquareTerminal, ArrowUp, ArrowUpDown, Download, EyeOff, FileLock2, ListTree, Lock, MoreHorizontal, RotateCcw, Search, Trash2, TriangleAlert, X } from 'lucide-react'
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronDown,
+  Download,
+  EyeOff,
+  FileLock2,
+  ListTree,
+  Lock,
+  MoreHorizontal,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  SquareTerminal,
+  Trash2,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
 import { RunContents } from '~/components/run-contents'
 import { RestoreTerminal } from '~/components/restore-terminal'
 import { Checkbox } from '~/components/ui/checkbox'
@@ -8,11 +28,11 @@ import { Switch } from '~/components/ui/switch'
 import { FieldContent } from '~/components/ui/field'
 import { getRunContents, getScrubRules } from '~/server/fns'
 import { useServerFn as useFn } from '@tanstack/react-start'
-import { useEffect } from 'react'
+import { Fragment, useEffect } from 'react'
 import { useMemo, useState } from 'react'
 import { z } from 'zod'
 import { PageBody, PageHeader } from '~/components/page'
-import { StatusBadge } from '~/components/status'
+import { NodeCard, PipelineSteps, StatusDot, EntityChip, type DotStatus, type PipelineStepItem } from '~/components/viz'
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
@@ -26,10 +46,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
-import { duration, formatBytes, formatDate, timeAgo } from '~/lib/format'
+import { duration, formatBytes, formatDate, stageDuration, timeAgo } from '~/lib/format'
+import { cn } from '~/lib/utils'
 import { useAction, usePolling } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
-import { deleteRun, getRuns, restoreBackup, type RunView } from '~/server/fns'
+import { deleteRun, getRuns, restoreBackup, runJobNow, type RunView } from '~/server/fns'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '~/components/ui/alert-dialog'
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -53,6 +74,87 @@ type Sort = { key: SortKey; dir: 'asc' | 'desc' }
 
 const STATUSES = { ok: 'Succeeded', partial: 'Partial', failed: 'Failed', running: 'Running' } as const
 const STATUS_ORDER = { failed: 0, partial: 1, running: 2, ok: 3 } as const
+const RUN_DOT: Record<RunView['status'], DotStatus> = { ok: 'success', partial: 'warning', failed: 'danger', running: 'running' }
+
+/** Status dot + plain word (DESIGN.md §5.3: "dot + word, instead of a colored badge background"). */
+function RunStatus({ status, label }: { status: RunView['status']; label?: string }) {
+  return (
+    <span className={cn('inline-flex items-center gap-1.5 text-sm', status === 'failed' && 'font-medium text-danger', status === 'running' && 'font-medium')}>
+      <StatusDot status={RUN_DOT[status]} />
+      {label ?? STATUSES[status]}
+    </span>
+  )
+}
+
+const STAGE_LABELS: Record<string, string> = { export: 'Export', compress: 'Compress', encrypt: 'Encrypt', upload: 'Upload', verify: 'Verify' }
+const STAGE_ORDER = ['export', 'compress', 'encrypt', 'upload', 'verify'] as const
+
+/** Real per-stage timings recorded by backup.server.ts (`runs.stages`), with real durations ("12.4s"). */
+function stepsFromStages(stages: NonNullable<RunView['stages']>): PipelineStepItem[] {
+  return STAGE_ORDER.map((id) => {
+    const s = stages.find((x) => x.id === id)
+    if (!s) return { id, label: STAGE_LABELS[id], status: 'pending' as const }
+    const detail = s.status === 'failed' || s.status === 'skipped' ? s.detail : (stageDuration(s.startedAt, s.endedAt) ?? undefined)
+    return { id, label: STAGE_LABELS[id], status: s.status, detail }
+  })
+}
+
+/**
+ * Honest run → PipelineStep mapping (DESIGN.md §5.4/§5.6: "map existing run statuses to pipeline
+ * states honestly, don't fake timings"). Runs made since per-stage tracking shipped carry real
+ * timings in `r.stages` (used via `stepsFromStages` above, including a live active step while the
+ * run is in progress and a real Verify stage). Older runs have `stages: null`; for those we fall
+ * back to deriving status only from what was persisted before: overall run status, whether the
+ * archive was encrypted, and each destination's own copy status — never a faked duration.
+ */
+function deriveRunSteps(r: RunView): PipelineStepItem[] {
+  if (r.stages?.length) return stepsFromStages(r.stages)
+
+  const copies = r.copies.filter((c) => !c.deleted)
+  const anyUploadFailed = copies.some((c) => c.status === 'failed')
+  const allUploadOk = copies.length > 0 && copies.every((c) => c.status === 'ok')
+
+  if (r.status === 'running') {
+    return [
+      { id: 'export', label: 'Export', status: 'done' },
+      { id: 'compress', label: 'Compress', status: 'done' },
+      { id: 'encrypt', label: 'Encrypt', status: r.encrypted ? 'done' : 'skipped' },
+      { id: 'upload', label: 'Upload', status: 'active' },
+      { id: 'verify', label: 'Verify', status: 'pending' },
+    ]
+  }
+  if (r.status === 'failed' && r.bytes == null) {
+    // Failed before an archive was produced — the earliest stage is the honest place to put it.
+    return [
+      { id: 'export', label: 'Export', status: 'failed', detail: r.error ?? undefined },
+      { id: 'compress', label: 'Compress', status: 'pending' },
+      { id: 'encrypt', label: 'Encrypt', status: 'pending' },
+      { id: 'upload', label: 'Upload', status: 'pending' },
+      { id: 'verify', label: 'Verify', status: 'pending' },
+    ]
+  }
+  if (r.status === 'failed' && r.encrypted === false && /encrypt|key/i.test(r.error ?? '')) {
+    return [
+      { id: 'export', label: 'Export', status: 'done' },
+      { id: 'compress', label: 'Compress', status: 'done' },
+      { id: 'encrypt', label: 'Encrypt', status: 'failed', detail: r.error ?? undefined },
+      { id: 'upload', label: 'Upload', status: 'pending' },
+      { id: 'verify', label: 'Verify', status: 'pending' },
+    ]
+  }
+  return [
+    { id: 'export', label: 'Export', status: 'done' },
+    { id: 'compress', label: 'Compress', status: 'done' },
+    { id: 'encrypt', label: 'Encrypt', status: r.encrypted ? 'done' : 'skipped' },
+    {
+      id: 'upload',
+      label: 'Upload',
+      status: copies.length === 0 ? (r.status === 'failed' ? 'failed' : 'skipped') : anyUploadFailed ? (allUploadOk ? 'done' : 'failed') : 'done',
+      detail: anyUploadFailed ? copies.find((c) => c.status === 'failed')?.error ?? undefined : undefined,
+    },
+    { id: 'verify', label: 'Verify', status: 'skipped', detail: 'not recorded for this backup' },
+  ]
+}
 
 /** Start of a local calendar day ('YYYY-MM-DD'), optionally shifted by whole days. */
 function localDay(day: string, shift = 0) {
@@ -78,14 +180,25 @@ function Runs() {
   const [status, setStatus] = useState<'all' | keyof typeof STATUSES>('all')
   const [instance, setInstance] = useState('all')
   const [sort, setSort] = useState<Sort>({ key: 'started', dir: 'desc' })
+  const [expanded, setExpanded] = useState<string | null>(null)
   const { can: allowed } = useWorkspace()
-  usePolling(data.runs.some((r) => r.status === 'running') || data.restores.some((r) => r.status === 'running'))
+  const runNow = useServerFn(runJobNow)
+  const { run: runAction, pending: runPending } = useAction()
+  const busy = data.runs.some((r) => r.status === 'running') || data.restores.some((r) => r.status === 'running')
+  usePolling(busy)
   const destName = (id: string) => data.destinations.find((d) => d.id === id)?.name ?? 'Deleted destination'
   const jobName = search.job ? data.runs.find((r) => r.job_id === search.job)?.job_name : null
   const instances = useMemo(() => {
     const seen = new Map<string, string>()
     for (const r of data.runs) seen.set(r.instance_id ?? 'deleted', r.instance_name)
     return [...seen].sort((a, b) => a[1].localeCompare(b[1]))
+  }, [data.runs])
+  // Jobs that still exist are listed under the "Run a job" dropdown — reconstructed from runs since
+  // this route doesn't load the jobs table (keeps the loader unchanged; see getRuns payload).
+  const runnableJobs = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string }>()
+    for (const r of data.runs) if (r.job_id) seen.set(r.job_id, { id: r.job_id, name: r.job_name })
+    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))
   }, [data.runs])
   const runs = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -126,7 +239,33 @@ function Runs() {
 
   return (
     <>
-      <PageHeader title="Runs & restores" description="Every backup run and its copies. Download or restore any copy still stored." />
+      <PageHeader
+        title="Runs & restores"
+        description="Every backup run and its copies. Download or restore any copy still stored."
+        actions={
+          <>
+            <Button size="sm" variant="outline" disabled={runPending} onClick={() => navigate({})}>
+              <RefreshCw className={runPending ? 'animate-spin' : ''} /> Refresh
+            </Button>
+            {allowed('run') && runnableJobs.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" disabled={runPending}>
+                    <Play /> Run a job
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {runnableJobs.map((j) => (
+                    <DropdownMenuItem key={j.id} onClick={() => runAction(() => runNow({ data: { id: j.id } }), { success: `${j.name} started` })}>
+                      <Play /> {j.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </>
+        }
+      />
       <PageBody>
         <Tabs value={search.tab ?? 'backups'} onValueChange={(tab) => navigate({ search: (s) => ({ ...s, tab: tab as 'backups' | 'restores' }) })}>
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -170,6 +309,7 @@ function Runs() {
                 {filtering && (
                   <Button size="sm" variant="ghost" onClick={clearFilters}><X /> Clear</Button>
                 )}
+                <span className="text-muted-foreground ml-auto hidden font-mono text-xs sm:inline">{runs.length} runs</span>
               </div>
             ) : null}
             {data.runs.length === 0 && !search.from && !search.to ? (
@@ -181,124 +321,174 @@ function Runs() {
                 </EmptyHeader>
               </Empty>
             ) : (
-              <Card className="py-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <SortHead label="Started" k="started" sort={sort} onSort={toggleSort} className="pl-4" />
-                      <SortHead label="Instance / job" k="instance" sort={sort} onSort={toggleSort} />
-                      <SortHead label="Status" k="status" sort={sort} onSort={toggleSort} />
-                      <SortHead label="Size" k="size" sort={sort} onSort={toggleSort} />
-                      <TableHead>Copies</TableHead>
-                      <TableHead className="w-52" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {runs.length === 0 && (
+              <>
+                {/* Mobile: stacked cards (DESIGN.md §6 "runs-mobile": table rows don't survive 390px). */}
+                <div className="flex flex-col gap-3 sm:hidden">
+                  {runs.length === 0 && (
+                    <p className="text-muted-foreground py-10 text-center text-sm">
+                      No backups match these filters. {filtering && <button type="button" className="underline" onClick={clearFilters}>Clear filters</button>}
+                    </p>
+                  )}
+                  {runs.map((r) => (
+                    <RunMobileCard key={r.id} r={r} destName={destName} onContents={() => setContents(r)} />
+                  ))}
+                </div>
+                <Card className="hidden py-0 sm:block">
+                  <Table>
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={6} className="text-muted-foreground py-10 text-center text-sm">
-                          No backups match these filters.{' '}
-                          {filtering && <button type="button" className="underline" onClick={clearFilters}>Clear filters</button>}
-                        </TableCell>
+                        <SortHead label="Started" k="started" sort={sort} onSort={toggleSort} className="pl-4" />
+                        <SortHead label="Instance / job" k="instance" sort={sort} onSort={toggleSort} />
+                        <SortHead label="Status" k="status" sort={sort} onSort={toggleSort} />
+                        <TableHead>Pipeline</TableHead>
+                        <SortHead label="Size" k="size" sort={sort} onSort={toggleSort} />
+                        <TableHead>Copies</TableHead>
+                        <TableHead className="w-52" />
                       </TableRow>
-                    )}
-                    {runs.map((r) => {
-                      const available = r.copies.filter((c) => c.status === 'ok' && !c.deleted)
-                      return (
-                        <TableRow key={r.id}>
-                          <TableCell className="pl-4">
-                            <Tooltip>
-                              <TooltipTrigger asChild><span className="text-sm">{timeAgo(r.started_at)}</span></TooltipTrigger>
-                              <TooltipContent>{formatDate(r.started_at)}</TooltipContent>
-                            </Tooltip>
-                            <div className="text-muted-foreground text-xs">
-                              {r.trigger.startsWith('manual:') ? `manual · ${r.trigger.slice(7)}` : r.trigger}
-                              {duration(r.started_at, r.finished_at) && ` · ${duration(r.started_at, r.finished_at)}`}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="font-medium">{r.instance_name}</div>
-                            <div className="text-muted-foreground text-xs">{r.job_name}</div>
-                          </TableCell>
-                          <TableCell className="max-w-72 whitespace-normal">
-                            <StatusBadge status={r.status} />
-                            {r.error && <p className="text-destructive mt-1 text-xs break-words">{r.error}</p>}
-                          </TableCell>
-                          <TableCell className="text-sm whitespace-nowrap">
-                            {formatBytes(r.bytes)} {r.encrypted && <Lock className="text-muted-foreground inline size-3" aria-label="Encrypted" />}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap gap-1">
-                              {r.copies.map((c) => (
-                                <Tooltip key={c.destination_id}>
-                                  <TooltipTrigger asChild>
-                                    <Badge variant={c.status === 'ok' && !c.deleted ? 'secondary' : 'outline'} className={c.status === 'failed' ? 'border-red-500/40 text-red-600' : c.deleted ? 'text-muted-foreground line-through' : ''}>
-                                      {destName(c.destination_id)}
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    {c.status === 'failed' ? c.error : c.deleted ? 'Pruned by retention' : c.key}
-                                    {c.locked_until && c.locked_until > Date.now() && ` · locked until ${formatDate(c.locked_until)}`}
-                                  </TooltipContent>
-                                </Tooltip>
-                              ))}
-                            </div>
-                          </TableCell>
-                          <TableCell className="pr-4 text-right">
-                            <div className="flex justify-end gap-1">
-                            {(r.status === 'ok' || r.status === 'partial') && (
-                              <Button size="sm" variant="ghost" onClick={() => setContents(r)} aria-label="Contents">
-                                <ListTree /> Contents
-                              </Button>
-                            )}
-                            {available.length > 0 && allowed('download') && (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button size="sm" variant="outline">Use backup</Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-64">
-                                  {available.map((c, idx) => (
-                                    <div key={c.destination_id}>
-                                      {idx > 0 && <DropdownMenuSeparator />}
-                                      <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">From {destName(c.destination_id)}</DropdownMenuLabel>
-                                      {allowed('restore') && (
-                                        <DropdownMenuItem onClick={() => setSource({ run: r, destinationId: c.destination_id, key: c.key })}>
-                                          <RotateCcw /> Restore…
-                                        </DropdownMenuItem>
-                                      )}
-                                      <DropdownMenuItem asChild>
-                                        <a href={`/api/download?run=${r.id}&dest=${c.destination_id}`}><Download /> Download zip</a>
-                                      </DropdownMenuItem>
-                                      {c.key.endsWith('.age') && (
-                                        <DropdownMenuItem asChild>
-                                          <a href={`/api/download?run=${r.id}&dest=${c.destination_id}&raw=1`}><FileLock2 /> Download encrypted (.age)</a>
-                                        </DropdownMenuItem>
-                                      )}
-                                    </div>
-                                  ))}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            )}
-                            {allowed('purge') && r.status !== 'running' && (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button size="icon-sm" variant="ghost" aria-label="More actions"><MoreHorizontal /></Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem variant="destructive" onClick={() => setDeleting(r)}>
-                                    <Trash2 /> Delete backup…
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            )}
-                            </div>
+                    </TableHeader>
+                    <TableBody>
+                      {runs.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-muted-foreground py-10 text-center text-sm">
+                            No backups match these filters.{' '}
+                            {filtering && <button type="button" className="underline" onClick={clearFilters}>Clear filters</button>}
                           </TableCell>
                         </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </Card>
+                      )}
+                      {runs.map((r) => {
+                        const available = r.copies.filter((c) => c.status === 'ok' && !c.deleted)
+                        const steps = deriveRunSteps(r)
+                        const isExpanded = expanded === r.id
+                        return (
+                          <Fragment key={r.id}>
+                            <TableRow>
+                              <TableCell className="pl-4">
+                                <Tooltip>
+                                  <TooltipTrigger asChild><span className="text-sm">{timeAgo(r.started_at)}</span></TooltipTrigger>
+                                  <TooltipContent>{formatDate(r.started_at)}</TooltipContent>
+                                </Tooltip>
+                                <div className="text-muted-foreground text-xs">
+                                  {r.trigger.startsWith('manual:') ? `manual · ${r.trigger.slice(7)}` : r.trigger}
+                                  {duration(r.started_at, r.finished_at) && ` · ${duration(r.started_at, r.finished_at)}`}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="font-medium">{r.instance_name}</div>
+                                <div className="text-muted-foreground text-xs">{r.job_name}</div>
+                              </TableCell>
+                              <TableCell className="max-w-52 whitespace-normal">
+                                <RunStatus status={r.status} />
+                                {r.error && <p className="text-danger mt-1 text-xs break-words">{r.error}</p>}
+                              </TableCell>
+                              <TableCell>
+                                <button
+                                  type="button"
+                                  className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-accent"
+                                  onClick={() => setExpanded((e) => (e === r.id ? null : r.id))}
+                                  aria-expanded={isExpanded}
+                                  aria-label="Toggle pipeline detail"
+                                >
+                                  <PipelineSteps steps={steps} compact />
+                                  <ChevronDown className={cn('text-muted-foreground size-3.5 shrink-0 transition-transform', isExpanded && 'rotate-180')} />
+                                </button>
+                              </TableCell>
+                              <TableCell className="text-sm whitespace-nowrap">
+                                {formatBytes(r.bytes)} {r.encrypted && <Lock className="text-muted-foreground inline size-3" aria-label="Encrypted" />}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-wrap gap-1">
+                                  {r.copies.map((c) => (
+                                    <Tooltip key={c.destination_id}>
+                                      <TooltipTrigger asChild>
+                                        <span>
+                                          <EntityChip
+                                            kind="destination"
+                                            name={destName(c.destination_id)}
+                                            status={c.status === 'ok' && !c.deleted ? 'success' : c.status === 'failed' ? 'danger' : 'neutral'}
+                                            size="sm"
+                                            className={c.deleted ? 'text-muted-foreground line-through' : c.status === 'failed' ? 'border-danger/40' : ''}
+                                          />
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        {c.status === 'failed' ? c.error : c.deleted ? 'Pruned by retention' : c.key}
+                                        {c.locked_until && c.locked_until > Date.now() && ` · locked until ${formatDate(c.locked_until)}`}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  ))}
+                                </div>
+                              </TableCell>
+                              <TableCell className="pr-4 text-right">
+                                <div className="flex justify-end gap-1">
+                                {(r.status === 'ok' || r.status === 'partial') && (
+                                  <Button size="sm" variant="ghost" onClick={() => setContents(r)} aria-label="Contents">
+                                    <ListTree /> Contents
+                                  </Button>
+                                )}
+                                {available.length > 0 && allowed('download') && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button size="sm" variant="outline">Use backup</Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="w-64">
+                                      {available.map((c, idx) => (
+                                        <div key={c.destination_id}>
+                                          {idx > 0 && <DropdownMenuSeparator />}
+                                          <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">From {destName(c.destination_id)}</DropdownMenuLabel>
+                                          {allowed('restore') && (
+                                            <DropdownMenuItem onClick={() => setSource({ run: r, destinationId: c.destination_id, key: c.key })}>
+                                              <RotateCcw /> Restore…
+                                            </DropdownMenuItem>
+                                          )}
+                                          <DropdownMenuItem asChild>
+                                            <a href={`/api/download?run=${r.id}&dest=${c.destination_id}`}><Download /> Download zip</a>
+                                          </DropdownMenuItem>
+                                          {c.key.endsWith('.age') && (
+                                            <DropdownMenuItem asChild>
+                                              <a href={`/api/download?run=${r.id}&dest=${c.destination_id}&raw=1`}><FileLock2 /> Download encrypted (.age)</a>
+                                            </DropdownMenuItem>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                                {allowed('purge') && r.status !== 'running' && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button size="icon-sm" variant="ghost" aria-label="More actions"><MoreHorizontal /></Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem variant="destructive" onClick={() => setDeleting(r)}>
+                                        <Trash2 /> Delete backup…
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                            {isExpanded && (
+                              <TableRow className="hover:bg-transparent">
+                                <TableCell colSpan={7} className="bg-muted/40 py-3">
+                                  <PipelineSteps steps={steps} />
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </Fragment>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </Card>
+                <p className="text-muted-foreground hidden font-mono text-xs sm:block">
+                  Pipeline: Export → Compress → Encrypt → Upload → Verify ·{' '}
+                  <span className="text-success">●</span> done ·{' '}
+                  <span className="text-running">●</span> active ·{' '}
+                  <span className="text-danger">●</span> failed ·{' '}
+                  <span className="text-muted-foreground">—</span> skipped
+                </p>
+              </>
             )}
           </TabsContent>
           <TabsContent value="restores" className="mt-4">
@@ -310,6 +500,44 @@ function Runs() {
       {deleting && <DeleteRunDialog run={deleting} destName={destName} onClose={() => setDeleting(null)} />}
       {source && <RestoreDialog data={data} source={source} onClose={() => setSource(null)} onDone={() => navigate({ search: (s) => ({ ...s, tab: 'restores' }) })} />}
     </>
+  )
+}
+
+/** Mobile (≤640px) stacked-card equivalent of a backups table row (DESIGN.md "runs-mobile"). */
+function RunMobileCard({ r, destName, onContents }: { r: RunView; destName: (id: string) => string; onContents: () => void }) {
+  const steps = deriveRunSteps(r)
+  return (
+    <Card className={cn('gap-2 p-4', r.status === 'failed' && 'border-danger/40')}>
+      <div className="flex items-start justify-between gap-2">
+        <RunStatus status={r.status} label={`${STATUSES[r.status]} · ${timeAgo(r.started_at)}`} />
+        <span className="text-sm whitespace-nowrap">
+          {formatBytes(r.bytes)} {r.encrypted && <Lock className="text-muted-foreground inline size-3" aria-label="Encrypted" />}
+        </span>
+      </div>
+      <div>
+        <div className="font-medium">{r.instance_name}</div>
+        <div className="text-muted-foreground text-xs">{r.job_name}</div>
+      </div>
+      <PipelineSteps steps={steps} compact />
+      {r.error && <p className="text-danger text-xs break-words">{r.error}</p>}
+      <div className="flex flex-wrap gap-1">
+        {r.copies.map((c) => (
+          <EntityChip
+            key={c.destination_id}
+            kind="destination"
+            name={destName(c.destination_id)}
+            status={c.status === 'ok' && !c.deleted ? 'success' : c.status === 'failed' ? 'danger' : 'neutral'}
+            size="sm"
+            className={c.deleted ? 'text-muted-foreground line-through' : ''}
+          />
+        ))}
+      </div>
+      {(r.status === 'ok' || r.status === 'partial') && (
+        <Button size="sm" variant="outline" className="self-start" onClick={onContents}>
+          <ListTree /> Contents
+        </Button>
+      )}
+    </Card>
   )
 }
 
@@ -343,45 +571,27 @@ function RestoreCard({ r }: { r: Data['restores'][number] }) {
   }, [r.status])
   const tables = r.tables ? (JSON.parse(r.tables) as string[]) : null
   const source = r.source_name ?? 'Deleted instance'
+  const running = r.status === 'running'
+  const edgeStatus: DotStatus = running ? 'running' : r.status === 'failed' ? 'danger' : 'success'
+
   return (
     <Card className="gap-0 py-0">
+      {/* Restore lineage (DESIGN.md §5.1/§5.5: NodeCard pair + Edge, "source backup → target instance"). */}
       <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center">
-        <div className="grid min-w-0 flex-1 items-center gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-          <div className="min-w-0 rounded-md border px-3 py-2">
-            <div className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
-              <Database className="size-3" /> Source
-            </div>
-            <div className="truncate font-medium">{source}</div>
-            <div className="text-muted-foreground flex flex-wrap items-center gap-x-1.5 text-xs">
-              {r.backup_at && <span>Backup {formatDate(r.backup_at)}</span>}
-              {r.backup_bytes != null && <span>· {formatBytes(r.backup_bytes)}</span>}
-              {r.backup_encrypted ? (
-                <span className="inline-flex items-center gap-1">
-                  · <Lock className="size-3" />encrypted
-                </span>
-              ) : null}
-            </div>
-            <div className="text-muted-foreground flex items-center gap-1 text-xs">
-              <HardDrive className="size-3 shrink-0" />
-              <span className="truncate">
-                {r.destination_name ?? 'Deleted destination'}
-                {r.destination_kind && ` · ${DEST_KIND[r.destination_kind] ?? r.destination_kind}`}
-              </span>
+        <div className="flex min-w-0 flex-1 flex-col items-center gap-2 sm:flex-row">
+          <NodeCard kind="run" title={source} subtitle={r.backup_at ? `Backup ${formatDate(r.backup_at)}` : undefined} status="neutral" />
+          <div className="flex flex-1 flex-col items-center gap-1">
+            {running && <Badge variant="outline" className="gap-1 text-running"><StatusDot status="running" size="sm" /> live</Badge>}
+            {!running && r.finished_at && <span className="text-muted-foreground font-mono text-[11px]">{duration(r.started_at, r.finished_at)}</span>}
+            <div className="relative h-0 w-full min-w-10">
+              <div className={cn('absolute inset-x-0 top-0 h-px', running ? 'edge-dash-flow border-t border-dashed border-running' : r.status === 'failed' ? 'bg-danger' : 'bg-success')} />
             </div>
           </div>
-          <ArrowRight className="text-muted-foreground mx-auto size-5 rotate-90 sm:rotate-0" />
-          <div className="min-w-0 rounded-md border px-3 py-2">
-            <div className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
-              <RotateCcw className="size-3" /> Target
-            </div>
-            <div className="truncate font-medium">{r.target_name}</div>
-            {r.target_url && <div className="text-muted-foreground truncate font-mono text-xs">{r.target_url}</div>}
-            <div className="text-muted-foreground text-xs">{MODES[r.mode as keyof typeof MODES]?.label ?? r.mode}</div>
-          </div>
+          <NodeCard kind="instance" title={r.target_name} subtitle={r.target_url ?? undefined} status={edgeStatus} />
         </div>
         <div className="flex shrink-0 flex-col gap-1 lg:w-56 lg:items-end lg:text-right">
           <div className="flex items-center gap-2 lg:justify-end">
-            <StatusBadge status={r.status} />
+            <RunStatus status={r.status === 'ok' ? 'ok' : r.status === 'failed' ? 'failed' : 'running'} label={r.status === 'ok' ? 'Succeeded' : r.status === 'failed' ? 'Failed' : 'Running'} />
             {r.rows_written != null && <span className="text-muted-foreground text-xs">{r.rows_written.toLocaleString()} documents</span>}
           </div>
           <div className="text-muted-foreground text-xs">
@@ -401,9 +611,14 @@ function RestoreCard({ r }: { r: Data['restores'][number] }) {
           </Button>
         </div>
       </div>
-      {(tables || r.scrubbed || r.error) && (
+      {(tables || r.scrubbed || r.error || r.destination_name) && (
         <div className="flex flex-col gap-1.5 border-t px-4 py-2">
-          {(tables || r.scrubbed) && (
+          <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+            <span>From</span>
+            <EntityChip kind="destination" name={r.destination_name ?? 'Deleted destination'} meta={r.destination_kind ? (DEST_KIND[r.destination_kind] ?? r.destination_kind) : undefined} size="sm" />
+            {r.mode && <span>· {MODES[r.mode as keyof typeof MODES]?.label ?? r.mode}</span>}
+          </div>
+          {Boolean(tables || r.scrubbed) && (
             <div className="flex flex-wrap items-center gap-1.5">
               {tables && <span className="text-muted-foreground text-xs">Tables:</span>}
               {tables?.map((t) => (
@@ -412,7 +627,7 @@ function RestoreCard({ r }: { r: Data['restores'][number] }) {
               {r.scrubbed ? <Badge variant="outline" className="gap-1"><EyeOff className="size-3" /> scrubbed</Badge> : null}
             </div>
           )}
-          {r.error && <p className="text-destructive text-xs break-words">{r.error}</p>}
+          {r.error && <p className="text-danger text-xs break-words">{r.error}</p>}
         </div>
       )}
       {open && (
@@ -543,7 +758,7 @@ function RestoreDialog({ data, source, onClose, onDone }: { data: Data; source: 
             )}
             <Field orientation="horizontal" className="rounded-md border p-3">
               <FieldContent>
-                <FieldLabel htmlFor="scrub" className="flex items-center gap-2"><EyeOff className="size-4" /> Scrub personal data</FieldLabel>
+                <FieldLabel htmlFor="scrub">Scrub personal data</FieldLabel>
                 <FieldDescription>
                   {ruleCount
                     ? `Apply the workspace's ${ruleCount} scrubbing rule${ruleCount === 1 ? '' : 's'} (fake emails, names…) before importing — for staging copies.`

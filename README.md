@@ -6,11 +6,12 @@
 
 **Backups for Convex you can actually restore.**
 
-Scheduled, encrypted, off-site backups for **self-hosted Convex** and **Convex Cloud**, with
-point-and-click restores, ransomware-proof storage and a console your whole team can use.
-Plus a production-ready **Convex-on-Coolify** template to run the instances themselves.
+Scheduled, encrypted, off-site backups for **self-hosted Convex** and **Convex Cloud** — see your
+whole backup estate on one map, spin up a brand-new bucket in under a minute, and restore with
+confidence instead of hope. Plus a production-ready **Convex-on-Coolify** template to run the
+instances themselves.
 
-[![Version](https://img.shields.io/badge/version-1.0.0--beta.1-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.0.0--beta.4-orange.svg)](CHANGELOG.md)
 [![AGPL-3.0-or-later License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Deploy on Coolify](https://img.shields.io/badge/deploy%20on-Coolify-8C52FF?logo=coolify&logoColor=white)](docs/coolify.md)
 [![Convex](https://img.shields.io/badge/Convex-self--hosted%20%26%20Cloud-EE342F)](https://convex.dev)
@@ -23,70 +24,71 @@ Plus a production-ready **Convex-on-Coolify** template to run the instances them
 <a href="docs/deploy.md#flyio"><img src="https://img.shields.io/badge/Deploy%20on-Fly.io-7B3BE2?style=for-the-badge&logo=flydotio&logoColor=white" alt="Deploy on Fly.io" height="32"></a>
 <a href="docs/deploy.md#docker"><img src="https://img.shields.io/badge/Run%20with-Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Run with Docker" height="32"></a>
 
-[Quick start](#-quick-start) · [Deploy anywhere](docs/deploy.md) · [Features](#-features) · [Screenshots](#-screenshots) · [How it works](#-how-it-works) · [Security](#-security) · [FAQ](#-faq)
+[60-second setup](#-60-second-setup) · [Deploy anywhere](docs/deploy.md) · [Why teams use it](#-why-teams-use-it) · [Screenshots](#-see-it) · [How it works](#-how-it-works) · [Security](#-security) · [FAQ](#-faq)
 
-<img src="docs/images/hero.png" alt="Convex Backup Console" width="100%" />
+<img src="docs/images/hero.png" alt="Convex Backup Console — overview with topology map" width="100%" />
 
 </div>
 
 ---
 
-## Why
+## Why this exists
 
 Convex's snapshot export is great, but a backup strategy needs more than `npx convex export` in a cron job:
 
 - **Off-site, versioned and immutable copies.** A backup on the same server, or one an attacker can delete, isn't a backup.
 - **Encryption you control**, so a leaked bucket doesn't leak your users' data.
 - **Restores that are rehearsed and safe:** into a staging copy, one table at a time, with personal data scrubbed.
-- **Visibility:** know when a backup *didn't* happen, not just when one failed.
+- **Visibility:** know when a backup *didn't* happen, not just when one failed, and see how everything connects.
 - **One place for every project and client**, with proper access control.
 
-Convex Backup Console does all of that in a single container.
+Convex Backup Console does all of that in a single container — and now shows you the whole picture
+at a glance.
 
-## ✨ Features
+## ✨ Why teams use it
 
-<table>
-<tr>
-<td width="50%"><img src="docs/images/feature-restore.png" alt="Restore" /></td>
-<td width="50%"><img src="docs/images/feature-storage.png" alt="Storage" /></td>
-</tr>
-<tr>
-<td colspan="2"><img src="docs/images/feature-teams.png" alt="Teams" /></td>
-</tr>
-</table>
+### 🧭 See your whole backup estate on one map
+Every instance, job and destination, drawn as a live topology — not three separate lists you have
+to mentally wire together. Each connection is colored by the health of its last run, running jobs
+animate, and hovering (or tapping, on mobile) traces one path end to end. ⌘K jumps straight to any
+node.
 
-**Backups**
-- 🔁 **Manual, cron or API-triggered** jobs, one instance → many destinations, including file storage.
-- ☁️ **Self-hosted Convex** (URL + admin key) **and Convex Cloud** (deploy key; URL looked up automatically).
-- 🔐 **age encryption** per workspace: decryptable offline with the standard `age` CLI.
-- 🗄️ **S3-compatible destinations** (Cloudflare R2, AWS S3, Backblaze B2, Wasabi, MinIO, RustFS) and local volumes.
-- 🧱 **S3 Object Lock:** backups can't be deleted or overwritten for N days, not even with stolen credentials.
-- 🧹 **GFS retention** (keep-last + daily/weekly/monthly), **exports cleaned up** on the source automatically.
-- 🧾 **Manifests:** tables, row counts, files and SHA-256 per backup, compared with the previous one.
+<img src="docs/images/feature-topology.png" alt="Overview page with the topology map: instances, jobs and destinations connected and colored by health" width="100%" />
 
-**Restores**
-- ↺ Into the **same or another instance**, in four modes (full, replace, append, empty-only).
-- ✂️ **Partial restores:** only the tables you pick; everything else stays untouched.
-- 🕶️ **Scrubbed staging copies:** fake emails, names and phones; redaction; hashing; consistent within a restore.
-- ⬇️ **Download** any backup, decrypted or as the raw `.age` file.
+### ☁️ A storage bucket in under a minute
+No more hand-creating an R2 or S3 bucket, an IAM user, and a least-privilege policy before you can
+even add a destination. Paste a one-time setup credential and the console provisions the bucket
+*and* mints a brand-new credential scoped to only that bucket — the setup credential is never
+stored, logged or shown again. Progress streams in step by step, and anything created is rolled
+back if a later step fails.
 
-**Operations**
-- 📈 **Overview & storage dashboard:** health per instance, growth chart, monthly cost estimate.
-- ✉️ **Branded emails** built with React Email: the workspace logo, accent colour and footer; templates you edit with variables and a live desktop/mobile preview (owners can write full HTML); and a **per-email recipients grid** (roles, specific members, outside addresses, "who did it"). Members can opt out, and alerts cover failed/partial backups, no recent backup, restores and daily/weekly digests.
-- 🔔 **Chat alerts:** Slack, Discord, Telegram, webhook.
-- 🩺 **Status URL** for Uptime Kuma, Better Stack and UptimeRobot (200 healthy / 503 not).
-- 🚀 **REST API + GitHub Action:** back up right before `npx convex deploy`, with a per-workspace switch to turn API access off (the Action then skips).
-- 🧭 **Guided product tour** on first sign-in (role-aware, replayable from the account menu) walks new users from connecting an instance to their first restore.
-- 🗑️ **Trash & deletion policy:** restore deleted items for N days, with **separate toggles** for deleting their backup files from **remote** (S3/R2/B2) and **local** storage, each with its own delay in days.
-- 📜 **Audit log** of every action, exportable as CSV.
+<img src="docs/images/feature-create-bucket.png" alt="Create a bucket for me wizard, options step" width="100%" />
 
-**Teams**
-- 🏢 **Workspaces**, e.g. one per client, each with its own logo, timezone, keys, alerts and members.
-- 👥 **Roles:** Owner · Admin · Operator (run and download, no restore) · Viewer (read-only).
-- 🔑 **Mandatory 2FA** (authenticator or passkey), **Google / GitHub / Microsoft** sign-in, invite-only accounts.
-- 🛡️ Session management, sign out everywhere, admin 2FA reset, login rate limiting.
+### 📈 A pipeline you can actually audit
+Every backup shows its export → compress → encrypt → upload → verify steps, each with a real
+duration — live while it's running. After every upload, the stored object's size is confirmed
+against the file that was sent (S3 `HeadObject`, pinned to the version; local: `stat`); a mismatch
+fails that destination's copy exactly like an upload failure would.
 
-## 🚀 Quick start
+<img src="docs/images/feature-runs.png" alt="Runs table with per-step pipeline timings" width="100%" />
+
+### ↺ Restore exactly what you need, into the right place
+Full snapshot or selected tables, into the same instance or a different one, with source → target
+lineage shown above the live log so there's no ambiguity about what's about to happen. Scrub emails,
+names and phone numbers for a safe staging copy, confirm by typing the target's name, and watch the
+import stream in real time.
+
+<img src="docs/images/feature-restore.png" alt="Restore dialog showing source backup, target instance, scrubbing and typed confirmation" width="100%" />
+
+### 🧱 Ransomware-proof, cost-aware storage
+Fan out to Cloudflare R2, AWS S3, Backblaze B2, Wasabi, MinIO, RustFS or a local volume. Turn on S3
+Object Lock and a backup can't be deleted or overwritten for N days — not even with stolen
+credentials. The Storage page shows growth over 90 days, a retention timeline per destination, and
+an estimated monthly cost.
+
+<img src="docs/images/feature-storage.png" alt="Storage page with growth chart and per-destination retention timeline" width="100%" />
+
+## 🚀 60-second setup
 
 ### Coolify (recommended)
 
@@ -132,7 +134,7 @@ Put it behind HTTPS (Traefik, Caddy, Nginx or a Cloudflare Tunnel; see [`app/doc
 |---|---|
 | Add a **self-hosted** instance: API URL + `./generate_admin_key.sh` output | Instances → Add instance |
 | Add a **Convex Cloud** deployment: a production or dev **deploy key** | Instances → Add instance → Convex Cloud ([guide](app/README.md#back-up-a-convex-cloud-deployment)) |
-| Add a destination (R2, S3, B2…), optionally with Object Lock | Destinations |
+| Add a destination — **Create bucket for me**, or connect an existing R2/S3/B2… | Destinations |
 | Create a job: schedule, retention, encryption | Jobs |
 | Choose who gets which email, brand and edit them | Emails |
 | Chat/webhook alerts | Notifications |
@@ -142,15 +144,19 @@ Put it behind HTTPS (Traefik, Caddy, Nginx or a Cloudflare Tunnel; see [`app/doc
 [`convex-instance.coolify.yaml`](convex-instance.coolify.yaml) deploys self-hosted Convex with **Postgres** and
 **RustFS** (S3) storage on Coolify. The detailed walkthrough is in [`docs/convex-on-coolify.md`](docs/convex-on-coolify.md).
 
-## 🖼️ Screenshots
+## 🖼️ See it
+
+A live demo workspace — "Acme Agency," four instances, three destinations, three months of
+scheduled runs — walked through the redesigned console.
 
 | | |
 |---|---|
-| ![Overview](docs/images/screens/overview.png) **Overview:** health of every instance | ![Runs](docs/images/screens/runs.png) **Runs:** every backup and its copies |
-| ![Contents](docs/images/screens/contents.png) **Contents:** tables, rows, changes since last backup | ![Restore](docs/images/screens/restore.png) **Restore:** pick target, mode, tables, scrubbing |
-| ![Storage](docs/images/screens/storage.png) **Storage:** growth and monthly cost | ![Workspace](docs/images/screens/workspace.png) **Workspace settings:** branding, colour theme, defaults, policies |
-| ![Destinations](docs/images/screens/destinations.png) **Destinations** with Object Lock | ![Members](docs/images/screens/members.png) **Members & roles** |
-| ![Login](docs/images/screens/login.png) **Sign-in:** password, Google, GitHub, Microsoft, passkeys | ![Dark mode](docs/images/screens/overview-dark.png) **Dark mode** |
+| ![Overview, dark theme](docs/images/screens/overview-dark.png) **Overview:** health of every instance, plus the topology map | ![Runs & restores](docs/images/screens/runs.png) **Runs:** every backup, its pipeline and its copies |
+| ![Backup contents](docs/images/screens/contents.png) **Contents:** tables, rows, changes since last backup | ![Restore](docs/images/screens/restore.png) **Restore:** source → target lineage, mode, tables, scrubbing |
+| ![Storage](docs/images/screens/storage.png) **Storage:** growth, cost and retention timeline | ![Create bucket for me](docs/images/screens/provision-options.png) **Create bucket for me:** a bucket and scoped credential, no cloud console required |
+| ![Destinations](docs/images/screens/destinations.png) **Destinations** with Object Lock | ![Jobs](docs/images/screens/jobs.png) **Jobs:** instance → destination at a glance |
+| ![Instances](docs/images/screens/instances.png) **Instances** | ![Members](docs/images/screens/members.png) **Members & roles** |
+| ![Command palette](docs/images/screens/command-palette.png) **⌘K command palette:** jump to any instance, job or destination | ![Overview, light theme](docs/images/screens/overview.png) **Light theme** |
 
 ## 🧠 How it works
 
@@ -161,7 +167,7 @@ flowchart LR
     CC[Convex Cloud<br/>deploy key]
   end
   subgraph Console[Convex Backup Console · one container]
-    S[Scheduler / API / UI] --> X[Export → manifest → age encrypt]
+    S[Scheduler / API / UI] --> X[Export → compress → encrypt → upload → verify]
     R[Restore: filter tables · scrub PII] --> I[Convex import API]
     DB[(SQLite · secrets encrypted<br/>with BACKUP_MASTER_KEY)]
   end
@@ -176,7 +182,7 @@ flowchart LR
 
 1. A job asks the instance for a **snapshot export** through Convex's admin HTTP API, the same API `npx convex export` uses.
 2. The console downloads it, records a **manifest** (tables, row counts, files, SHA-256) and **encrypts** it with the workspace's age key.
-3. The archive is uploaded to every destination (with **Object Lock** where configured), then **retention** prunes old copies and the export is removed from the source.
+3. The archive is uploaded to every destination (with **Object Lock** where configured) and **verified** against the stored object, then **retention** prunes old copies and the export is removed from the source.
 4. A **restore** downloads and decrypts a copy, optionally **filters tables** or **scrubs** personal data, and runs Convex's import with your chosen mode.
 
 ### Recover without the console
@@ -195,6 +201,7 @@ npx convex import --replace-all backup.zip                           # into any 
 | Brute force | 5 sign-in / 2FA attempts per minute per IP (Cloudflare-aware) |
 | Secrets at rest | Admin keys, deploy keys, S3 secrets, webhook URLs and age keys are encrypted with AES-256-GCM under `BACKUP_MASTER_KEY` |
 | Backups at rest | age (X25519) per workspace; S3 Object Lock for immutability |
+| One-time credentials | "Create bucket for me" setup credentials are held in memory for a single request only — never stored, logged or shown again |
 | Isolation | Every query scoped to the active workspace; role checks on every server function and API call |
 | Container | Non-root, read-only filesystem, all capabilities dropped |
 | Audit | Every change, backup, restore, download and key reveal is logged |
@@ -220,11 +227,51 @@ The REST API is documented in [`docs/github-action.md`](docs/github-action.md).
 | Off-site copies in your own storage | ✅ | DIY | ❌ |
 | Encryption you hold the key to | ✅ | DIY | ❌ |
 | Immutable (Object Lock) | ✅ | DIY | ❌ |
+| One-click bucket + scoped credential | ✅ | ❌ | — |
 | Partial & scrubbed restores | ✅ | ❌ | ❌ |
+| Visual topology of instances/jobs/destinations | ✅ | ❌ | ❌ |
 | Alerts, digests, status URL | ✅ | DIY | — |
 | Multi-project, roles, audit log | ✅ | ❌ | Per-team |
 
 Convex Cloud's own backups are excellent, so keep them on. This adds independent, encrypted copies outside Convex.
+
+## 📦 Everything else
+
+**Backups**
+- 🔁 Manual, cron or API-triggered jobs, one instance → many destinations, including file storage.
+- ☁️ Self-hosted Convex (URL + admin key) and Convex Cloud (deploy key; URL looked up automatically).
+- 🔐 age encryption per workspace: decryptable offline with the standard `age` CLI.
+- 🗄️ S3-compatible destinations (Cloudflare R2, AWS S3, Backblaze B2, Wasabi, MinIO, RustFS) and local volumes.
+- 🧱 S3 Object Lock: backups can't be deleted or overwritten for N days, not even with stolen credentials.
+- 🧹 GFS retention (keep-last + daily/weekly/monthly), exports cleaned up on the source automatically.
+- 🧾 Manifests: tables, row counts, files and SHA-256 per backup, compared with the previous one.
+
+**Restores**
+- ↺ Into the same or another instance, in four modes (full, replace, append, empty-only).
+- ✂️ Partial restores: only the tables you pick; everything else stays untouched.
+- 🕶️ Scrubbed staging copies: fake emails, names and phones; redaction; hashing; consistent within a restore.
+- ⬇️ Download any backup, decrypted or as the raw `.age` file.
+
+**Operations**
+- 🧭 Topology map on the Overview: instances → jobs → destinations, colored by last-run health.
+- ⌘K command palette: jump to any page, instance, job or destination, or run a quick action.
+- 📈 Overview & storage dashboard: health per instance, growth chart, monthly cost estimate.
+- ✉️ Branded emails built with React Email: workspace logo, accent colour and footer; templates you edit with
+  variables and a live preview (owners can write full HTML); a per-email recipients grid (roles, specific members,
+  outside addresses). Members can opt out; alerts cover failed/partial backups, no recent backup, restores and digests.
+- 🔔 Chat alerts: Slack, Discord, Telegram, webhook.
+- 🩺 Status URL for Uptime Kuma, Better Stack and UptimeRobot (200 healthy / 503 not).
+- 🚀 REST API + GitHub Action: back up right before `npx convex deploy`, with a per-workspace switch to turn API access off.
+- 🧭 Guided product tour on first sign-in (role-aware, replayable from the account menu).
+- 🗑️ Trash & deletion policy: restore deleted items for N days, with separate toggles and delays for deleting their
+  backup files from remote (S3/R2/B2) and local storage.
+- 📜 Audit log of every action, exportable as CSV.
+
+**Teams**
+- 🏢 Workspaces, e.g. one per client, each with its own logo, timezone, keys, alerts and members.
+- 👥 Roles: Owner · Admin · Operator (run and download, no restore) · Viewer (read-only).
+- 🔑 Mandatory 2FA (authenticator or passkey), Google / GitHub / Microsoft sign-in, invite-only accounts.
+- 🛡️ Session management, sign out everywhere, admin 2FA reset, login rate limiting.
 
 ## 📁 Repository
 
@@ -268,6 +315,10 @@ Exports are streamed to disk and uploaded in parts, so size is bounded by the co
 
 **Is Microsoft sign-in work-accounts only?**
 Set `MICROSOFT_TENANT_ID` to `common` (any account), `organizations` (work/school), or your tenant ID.
+
+**Does "Create bucket for me" need standing cloud credentials?**
+No — the setup credential you paste in (an R2 API token or an AWS IAM access key) is used once, in memory, to
+create the bucket and a brand-new credential scoped to only that bucket. It's never stored, logged or shown again.
 
 ## 🗺️ Roadmap
 

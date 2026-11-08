@@ -51,10 +51,12 @@ function Verify() {
   return (
     <AuthShell>
       <Card>
-        <CardHeader className="text-center">
+        <CardHeader className="items-center text-center">
           <ShieldCheck className="text-primary mx-auto mb-1 size-8" />
           <CardTitle className="text-xl">Confirm it's you</CardTitle>
-          <CardDescription>Signed in as {user.email}. Every session needs your second factor.</CardDescription>
+          <CardDescription>
+            Signed in as <span className="font-mono text-foreground">{user.email}</span>. Every session needs your second factor.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <FieldGroup>

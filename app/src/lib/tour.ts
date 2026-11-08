@@ -106,6 +106,23 @@ export async function startTour({ role, platformAdmin, onFinish }: { role: Role 
     overlayOpacity: 0.55,
     // Highlighted sidebar links aren't clickable, so the tour can't navigate away mid-way.
     disableActiveInteraction: true,
+    // Swap driver's plain "x of y" progress text for a step-dot track + the count, matching
+    // DESIGN.md's step dots + "2 of 7" treatment — driver has no built-in dot UI, so this hook
+    // rebuilds the progress element's children each render.
+    onPopoverRender: (popover, { config, state }) => {
+      const total = config.steps?.length ?? steps.length
+      const current = (state.activeIndex ?? 0) + 1
+      const track = document.createElement('span')
+      track.className = 'cbc-tour-dots'
+      for (let i = 0; i < total; i++) {
+        const dot = document.createElement('span')
+        dot.className = i < current ? 'cbc-tour-dot is-done' : 'cbc-tour-dot'
+        track.append(dot)
+      }
+      const count = document.createElement('span')
+      count.textContent = `${current} of ${total}`
+      popover.progress.replaceChildren(track, count)
+    },
     // Finish, close button, Escape or overlay click. (onDestroyed is skipped when the tour is closed
     // before a step's highlight animation completes, so this hook does the destroying itself.)
     onDestroyStarted: (_el, _step, { driver: d }) => {

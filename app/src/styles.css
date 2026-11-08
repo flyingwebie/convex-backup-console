@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 @import "driver.js/dist/driver.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -9,6 +10,30 @@
 @theme inline {
     --font-heading: var(--font-sans);
     --font-sans: 'Geist Variable', sans-serif;
+    --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace;
+    --color-success: var(--success);
+    --color-success-foreground: var(--success-foreground);
+    --color-success-muted: var(--success-muted);
+    --color-warning: var(--warning);
+    --color-warning-foreground: var(--warning-foreground);
+    --color-warning-muted: var(--warning-muted);
+    --color-danger: var(--danger);
+    --color-danger-foreground: var(--danger-foreground);
+    --color-danger-muted: var(--danger-muted);
+    --color-info: var(--info);
+    --color-info-foreground: var(--info-foreground);
+    --color-info-muted: var(--info-muted);
+    --color-running: var(--running);
+    --color-running-foreground: var(--running-foreground);
+    --color-running-muted: var(--running-muted);
+    --shadow-sm: var(--shadow-sm);
+    --shadow-md: var(--shadow-md);
+    --shadow-lg: var(--shadow-lg);
+    --ease-standard: var(--ease-standard);
+    --ease-exit: var(--ease-exit);
+    --duration-fast: var(--duration-fast);
+    --duration-base: var(--duration-base);
+    --duration-slow: var(--duration-slow);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -50,72 +75,126 @@
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
+    /* neutrals: cool graphite (hue ~255), not pure grayscale — reads as "ink", not default shadcn zinc */
+    --background: oklch(0.985 0.002 255);
+    --foreground: oklch(0.18 0.012 258);
     --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
+    --card-foreground: oklch(0.18 0.012 258);
     --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --popover-foreground: oklch(0.18 0.012 258);
+    --primary: oklch(0.225 0.018 258);
+    --primary-foreground: oklch(0.985 0.002 255);
+    --secondary: oklch(0.955 0.004 255);
+    --secondary-foreground: oklch(0.225 0.018 258);
+    --muted: oklch(0.955 0.004 255);
+    --muted-foreground: oklch(0.49 0.014 258);
+    --accent: oklch(0.94 0.008 258);
+    --accent-foreground: oklch(0.225 0.018 258);
+    --destructive: oklch(0.577 0.215 25.5);
+    --border: oklch(0.906 0.004 255);
+    --input: oklch(0.906 0.004 255);
+    --ring: oklch(0.6 0.05 258);
+    /* chart palette: five muted, distinguishable hues for categorical series */
+    --chart-1: oklch(0.58 0.14 258);
+    --chart-2: oklch(0.63 0.12 185);
+    --chart-3: oklch(0.72 0.14 75);
+    --chart-4: oklch(0.6 0.16 15);
+    --chart-5: oklch(0.55 0.13 305);
+    --radius: 0.5rem;
+    --sidebar: oklch(0.97 0.003 255);
+    --sidebar-foreground: oklch(0.18 0.012 258);
+    --sidebar-primary: oklch(0.225 0.018 258);
+    --sidebar-primary-foreground: oklch(0.985 0.002 255);
+    --sidebar-accent: oklch(0.94 0.008 258);
+    --sidebar-accent-foreground: oklch(0.225 0.018 258);
+    --sidebar-border: oklch(0.906 0.004 255);
+    --sidebar-ring: oklch(0.6 0.05 258);
+
+    /* semantic status tokens (additive — never overridden by a workspace theme) */
+    --success: oklch(0.6 0.13 165);
+    --success-foreground: oklch(0.99 0.01 165);
+    --success-muted: oklch(0.94 0.045 165);
+    --warning: oklch(0.72 0.15 75);
+    --warning-foreground: oklch(0.2 0.02 75);
+    --warning-muted: oklch(0.94 0.06 85);
+    --danger: oklch(0.577 0.215 25.5);
+    --danger-foreground: oklch(0.99 0.01 25.5);
+    --danger-muted: oklch(0.94 0.05 25.5);
+    --info: oklch(0.58 0.14 258);
+    --info-foreground: oklch(0.99 0.01 258);
+    --info-muted: oklch(0.94 0.035 258);
+    --running: oklch(0.55 0.17 300);
+    --running-foreground: oklch(0.99 0.01 300);
+    --running-muted: oklch(0.94 0.05 300);
+
+    /* elevation: resting cards use a 1px border, not a shadow. shadow is reserved for overlays. */
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
+    --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.06);
+    --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.18);
+
+    /* motion */
+    --duration-fast: 120ms;
+    --duration-base: 180ms;
+    --duration-slow: 240ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
+    --background: oklch(0.17 0.012 258);
+    --foreground: oklch(0.955 0.003 255);
+    --card: oklch(0.215 0.013 258);
+    --card-foreground: oklch(0.955 0.003 255);
+    --popover: oklch(0.23 0.014 258);
+    --popover-foreground: oklch(0.955 0.003 255);
+    --primary: oklch(0.89 0.006 255);
+    --primary-foreground: oklch(0.2 0.014 258);
+    --secondary: oklch(0.28 0.015 258);
+    --secondary-foreground: oklch(0.955 0.003 255);
+    --muted: oklch(0.26 0.014 258);
+    --muted-foreground: oklch(0.67 0.014 258);
+    --accent: oklch(0.3 0.017 258);
+    --accent-foreground: oklch(0.955 0.003 255);
+    --destructive: oklch(0.65 0.2 23);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --ring: oklch(0.55 0.05 258);
+    --chart-1: oklch(0.68 0.14 258);
+    --chart-2: oklch(0.7 0.11 185);
+    --chart-3: oklch(0.78 0.13 80);
+    --chart-4: oklch(0.68 0.16 18);
+    --chart-5: oklch(0.68 0.13 305);
+    --sidebar: oklch(0.145 0.012 258);
+    --sidebar-foreground: oklch(0.955 0.003 255);
+    --sidebar-primary: oklch(0.68 0.14 258);
+    --sidebar-primary-foreground: oklch(0.985 0.002 255);
+    --sidebar-accent: oklch(0.26 0.015 258);
+    --sidebar-accent-foreground: oklch(0.955 0.003 255);
     --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar-ring: oklch(0.55 0.05 258);
+
+    --success: oklch(0.72 0.15 160);
+    --success-foreground: oklch(0.17 0.03 160);
+    --success-muted: oklch(0.28 0.06 160);
+    --warning: oklch(0.78 0.14 80);
+    --warning-foreground: oklch(0.2 0.03 80);
+    --warning-muted: oklch(0.3 0.06 80);
+    --danger: oklch(0.65 0.2 23);
+    --danger-foreground: oklch(0.17 0.03 23);
+    --danger-muted: oklch(0.3 0.06 23);
+    --info: oklch(0.68 0.14 258);
+    --info-foreground: oklch(0.17 0.03 258);
+    --info-muted: oklch(0.28 0.055 258);
+    --running: oklch(0.72 0.17 300);
+    --running-foreground: oklch(0.17 0.03 300);
+    --running-muted: oklch(0.3 0.06 300);
+
+    /* dark overlays are dark-on-dark, so shadows alone barely read — a 1px border does the
+       separating work here. DialogContent already carries ring-foreground/10; SheetContent gets
+       its border via data-side. */
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-md: 0 4px 16px -2px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-lg: 0 16px 48px -8px rgb(0 0 0 / 0.6);
 }
 
 /* Workspace colour themes (see src/lib/themes.ts): recolour the primary accent. */
@@ -228,24 +307,48 @@
     --chart-1: oklch(0.645 0.246 16.439);
 }
 
-/* Product tour (driver.js, see src/lib/tour.ts) in the console's colours. */
+/* ───────────────────────────────────────────────────────────────────────────────────────────
+   Product tour (driver.js, see src/lib/tour.ts) restyled onto the console's tokens: --popover/
+   --border/--shadow-md/--radius-lg per DESIGN.md §3 + §6 ("Product tour"), step dots + "x of y"
+   (built by onPopoverRender in tour.ts, since driver has no built-in dot UI) and shadcn-style
+   Back/Next buttons. Keep this block together — it's the one allowed styles.css carve-out for
+   driver.js class overrides.
+   ─────────────────────────────────────────────────────────────────────────────────────────── */
 .driver-popover.cbc-tour {
     font-family: var(--font-sans);
     background-color: var(--popover);
     color: var(--popover-foreground);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 1rem;
+    padding: 1.1rem;
     max-width: 22rem;
-    box-shadow: 0 10px 30px rgb(0 0 0 / 0.25);
+    box-shadow: var(--shadow-md);
 }
 .cbc-tour .driver-popover-title { font-size: 0.95rem; font-weight: 600; line-height: 1.4; }
-.cbc-tour .driver-popover-description { font-size: 0.875rem; line-height: 1.55; color: var(--muted-foreground); }
+.cbc-tour .driver-popover-description { font-size: 0.875rem; line-height: 1.55; color: var(--muted-foreground); margin-top: 0.375rem; }
 .cbc-tour .driver-popover-description strong { color: var(--popover-foreground); font-weight: 600; }
-.cbc-tour .driver-popover-progress-text { font-size: 0.75rem; color: var(--muted-foreground); }
 .cbc-tour .driver-popover-close-btn { color: var(--muted-foreground); }
 .cbc-tour .driver-popover-close-btn:hover { color: var(--popover-foreground); }
-.cbc-tour .driver-popover-footer { margin-top: 1rem; }
+.cbc-tour .driver-popover-footer {
+    margin-top: 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+.cbc-tour .driver-popover-progress-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    order: -1;
+    flex: 1;
+}
+.cbc-tour-dots { display: inline-flex; align-items: center; gap: 0.25rem; }
+.cbc-tour-dot { display: block; width: 5px; height: 5px; border-radius: 9999px; background-color: var(--border); }
+.cbc-tour-dot.is-done { background-color: var(--primary); }
+.cbc-tour .driver-popover-footer-button-container { display: flex; gap: 0.5rem; }
 .cbc-tour .driver-popover-footer button {
     font: inherit;
     font-size: 0.8rem;
@@ -256,6 +359,7 @@
     border: 1px solid var(--border);
     background-color: var(--background);
     color: var(--foreground);
+    transition: background-color var(--duration-fast) var(--ease-standard);
 }
 .cbc-tour .driver-popover-footer button:hover { background-color: var(--accent); }
 .cbc-tour .driver-popover-footer .driver-popover-next-btn {
@@ -278,5 +382,61 @@
     }
   html {
     @apply font-sans;
+    }
+}
+
+/* Mono figures read slightly larger than sans at the same size — tighten tracking and force
+   tabular alignment for any numeric/data value set in --font-mono (ids, bytes, cron, hashes). */
+.font-mono,
+[class*="font-mono"] {
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Status Dot "running" pulse (see src/components/viz/status-dot.tsx): a single reusable 1.6s
+   loop on the dot's outer ring. The only place sustained looped motion is allowed — it signals
+   "this is happening right now," not decoration. */
+@keyframes status-dot-pulse {
+    0% {
+        transform: scale(1);
+        opacity: 0.55;
+    }
+    100% {
+        transform: scale(1.6);
+        opacity: 0;
+    }
+}
+
+.status-dot-ring {
+    animation: status-dot-pulse 1.6s var(--ease-standard) infinite;
+}
+
+/* Edge "marching ants" for an in-progress connector (see src/components/viz/topology-map.tsx). */
+@keyframes edge-dash-flow {
+    to {
+        stroke-dashoffset: -24;
+    }
+}
+
+.edge-flow {
+    animation: edge-dash-flow 1.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .status-dot-ring {
+        animation: none;
+        opacity: 0.35;
+        transform: none;
+    }
+    .edge-flow {
+        animation: none;
+    }
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
     }
 }

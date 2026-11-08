@@ -1,6 +1,6 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Mail, Pencil, Plus, RotateCcw, Send, ShieldCheck, ShieldOff } from 'lucide-react'
+import { Building2, Mail, Pencil, Plus, RotateCcw, Send, ShieldCheck, ShieldOff, Users } from 'lucide-react'
 import { useState } from 'react'
 import { Confirm } from '~/components/confirm'
 import { CreateWorkspaceDialog } from '~/components/create-workspace'
@@ -13,8 +13,10 @@ import { Checkbox } from '~/components/ui/checkbox'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
 import { Switch } from '~/components/ui/switch'
+import { StatusDot } from '~/components/viz'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { formatDate, timeAgo } from '~/lib/format'
+import { isTheme, THEME_SWATCH } from '~/lib/themes'
 import { useAction } from '~/lib/use-action'
 import { getPlatformEmails } from '~/server/email-fns'
 import { getPlatform, purgeWorkspaceNow, resetUserSecondFactors, restoreWorkspaceFromTrash, saveSmtpSettings, setPlatformAdmin, testSmtp } from '~/server/fns'
@@ -46,6 +48,16 @@ function Platform() {
       />
       <PageBody>
         <Card className="py-0">
+          <CardHeader className="flex-row items-center gap-3 border-b py-4">
+            <span className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
+              <Building2 className="text-muted-foreground size-4" />
+            </span>
+            <div className="flex-1">
+              <CardTitle>Workspaces</CardTitle>
+              <CardDescription>Every workspace on this console, including ones pending purge.</CardDescription>
+            </div>
+            <span className="text-muted-foreground font-mono text-xs">{data.workspaces.length} workspaces</span>
+          </CardHeader>
           <Table>
             <TableHeader>
               <TableRow>
@@ -61,6 +73,11 @@ function Platform() {
                 <TableRow key={w.id}>
                   <TableCell className="pl-4">
                     <div className="flex items-center gap-2">
+                      <span
+                        className="size-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: THEME_SWATCH[isTheme(w.theme) ? w.theme : 'neutral'] }}
+                        aria-hidden
+                      />
                       <WorkspaceLogo name={w.name} logo={w.logo} className="size-7 rounded-md text-[10px]" />
                       <div>
                         <div className="font-medium">{w.name}</div>
@@ -102,12 +119,18 @@ function Platform() {
           </Table>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Users</CardTitle>
-            <CardDescription>Platform admins can create workspaces and see this page. Workspace access is managed in each workspace's Members.</CardDescription>
+        <Card className="py-0">
+          <CardHeader className="flex-row items-center gap-3 border-b py-4">
+            <span className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
+              <Users className="text-muted-foreground size-4" />
+            </span>
+            <div className="flex-1">
+              <CardTitle>Users</CardTitle>
+              <CardDescription>Everyone with an account on this console, across all workspaces.</CardDescription>
+            </div>
+            <span className="text-muted-foreground font-mono text-xs">{data.users.length} users</span>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pb-4">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -207,9 +230,15 @@ function SmtpCard({ smtp }: { smtp: Awaited<ReturnType<typeof getPlatform>>['smt
           )
         }}
       >
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Mail className="size-4" /> Email (SMTP)</CardTitle>
-          <CardDescription>Sends invitations, alerts, digests and security emails for every workspace (unless a workspace sets its own). Without it, you copy invitation links manually.</CardDescription>
+        <CardHeader className="flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2"><Mail className="size-4" /> Email (SMTP)</CardTitle>
+            <CardDescription>Sends invitations, alerts, digests and security emails for every workspace (unless a workspace sets its own). Without it, you copy invitation links manually.</CardDescription>
+          </div>
+          <Badge variant="outline" className={smtp ? 'text-success border-success/30' : 'text-muted-foreground'}>
+            <StatusDot status={smtp ? 'success' : 'neutral'} size="sm" className="mr-1" />
+            {smtp ? 'Configured' : 'Not configured'}
+          </Badge>
         </CardHeader>
         <CardContent className="py-6">
           <FieldGroup>

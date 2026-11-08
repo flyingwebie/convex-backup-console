@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Copy, Link2, Mail, ShieldCheck, ShieldOff, Trash2, UserPlus, X } from 'lucide-react'
+import { Clock, Copy, Crown, Eye, Link2, Mail, PlayCircle, Shield, ShieldCheck, ShieldOff, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Confirm } from '~/components/confirm'
@@ -20,6 +20,8 @@ import { ROLES, ROLE_INFO, type Role } from '~/lib/permissions'
 import { useAction } from '~/lib/use-action'
 import { useWorkspace } from '~/lib/use-workspace'
 import { cancelInvite, changeMemberRole, getMembers, inviteMember, removeMember } from '~/server/fns'
+
+const ROLE_ICON: Record<Role, typeof Crown> = { owner: Crown, admin: Shield, operator: PlayCircle, viewer: Eye }
 
 export const Route = createFileRoute('/_app/members')({
   loader: () => getMembers(),
@@ -47,6 +49,16 @@ function Members() {
       />
       <PageBody>
         <Card className="py-0">
+          <CardHeader className="flex-row items-center gap-3 border-b py-4">
+            <span className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
+              <Users className="text-muted-foreground size-4" />
+            </span>
+            <div className="flex-1">
+              <CardTitle>Members</CardTitle>
+              <CardDescription>Change a role inline. Every workspace keeps at least one owner.</CardDescription>
+            </div>
+            <span className="text-muted-foreground font-mono text-xs">{data.members.length} members</span>
+          </CardHeader>
           <Table>
             <TableHeader>
               <TableRow>
@@ -61,13 +73,28 @@ function Members() {
               {data.members.map((m) => (
                 <TableRow key={m.id}>
                   <TableCell className="pl-4">
-                    <div className="font-medium">{m.name} {m.you && <span className="text-muted-foreground text-xs">(you)</span>}</div>
-                    <div className="text-muted-foreground text-xs">{m.email}</div>
+                    <div className="flex items-center gap-3">
+                      <span className="bg-muted flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold uppercase">
+                        {(m.name || m.email).slice(0, 2)}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{m.name} {m.you && <span className="text-muted-foreground text-xs">(you)</span>}</div>
+                        <div className="text-muted-foreground truncate text-xs">{m.email}</div>
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell>
-                    {m.two_factor ? <ShieldCheck className="size-4 text-emerald-600" aria-label="Enabled" /> : (
+                    {m.two_factor ? (
+                      <span className="text-success inline-flex items-center gap-1.5 text-xs">
+                        <ShieldCheck className="size-4" aria-hidden /> Enabled
+                      </span>
+                    ) : (
                       <Tooltip>
-                        <TooltipTrigger asChild><ShieldOff className="size-4 text-amber-600" aria-label="Not enrolled" /></TooltipTrigger>
+                        <TooltipTrigger asChild>
+                          <span className="text-warning inline-flex items-center gap-1.5 text-xs">
+                            <ShieldOff className="size-4" aria-hidden /> Not enrolled
+                          </span>
+                        </TooltipTrigger>
                         <TooltipContent>Hasn't finished 2FA enrolment — can't access anything yet</TooltipContent>
                       </Tooltip>
                     )}
@@ -103,45 +130,75 @@ function Members() {
         </Card>
 
         {manage && data.invitations.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Pending invitations</CardTitle>
-              <CardDescription>Links expire after 7 days.</CardDescription>
+          <Card className="py-0">
+            <CardHeader className="flex-row items-center gap-3 border-b py-4">
+              <span className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
+                <Mail className="text-muted-foreground size-4" />
+              </span>
+              <div className="flex-1">
+                <CardTitle>Pending invitations</CardTitle>
+                <CardDescription>Not yet accepted. Invite links expire after 7 days.</CardDescription>
+              </div>
+              <span className="text-muted-foreground font-mono text-xs">{data.invitations.length} pending</span>
             </CardHeader>
-            <CardContent>
-              <ul className="divide-y">
-                {data.invitations.map((i) => (
-                  <li key={i.id} className="flex items-center justify-between gap-4 py-2.5">
+            <CardContent className="flex flex-col gap-2 py-4">
+              {data.invitations.map((i) => (
+                <div
+                  key={i.id}
+                  className="border-border bg-muted/30 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-dashed px-3 py-2.5"
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <span className="bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-full">
+                      <Mail className="size-4" />
+                    </span>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">{i.email}</div>
-                      <div className="text-muted-foreground text-xs">
-                        {ROLE_INFO[i.role as Role]?.label ?? i.role} · {i.expired ? <span className="text-destructive">expired</span> : `expires ${timeAgo(new Date(i.expires_at).getTime())}`}
-                      </div>
+                      <div className="text-muted-foreground truncate text-xs">Invitation pending</div>
                     </div>
-                    <div className="flex gap-1">
-                      {!i.expired && <Button size="sm" variant="outline" onClick={() => copy(i.link)}><Copy /> Copy link</Button>}
-                      <Button size="icon" variant="ghost" aria-label="Cancel invitation" onClick={() => run(() => cancel({ data: { id: i.id } }), { success: 'Invitation cancelled' })}>
-                        <X />
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                  </div>
+                  <Badge variant="outline">{ROLE_INFO[i.role as Role]?.label ?? i.role}</Badge>
+                  <span className="text-muted-foreground inline-flex items-center gap-1 text-xs whitespace-nowrap">
+                    <Clock className="size-3.5" />
+                    {i.expired ? <span className="text-destructive">Expired</span> : `Expires ${timeAgo(new Date(i.expires_at).getTime())}`}
+                  </span>
+                  <div className="ml-auto flex gap-1">
+                    {!i.expired && <Button size="sm" variant="outline" onClick={() => copy(i.link)}><Copy /> Copy link</Button>}
+                    <Button size="icon" variant="ghost" aria-label="Cancel invitation" onClick={() => run(() => cancel({ data: { id: i.id } }), { success: 'Invitation cancelled' })}>
+                      <X />
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </CardContent>
           </Card>
         )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Roles</CardTitle>
+        <Card className="py-0">
+          <CardHeader className="flex-row items-center gap-3 border-b py-4">
+            <span className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
+              <Shield className="text-muted-foreground size-4" />
+            </span>
+            <div>
+              <CardTitle>Roles</CardTitle>
+              <CardDescription>What each role can do in {workspace.name}.</CardDescription>
+            </div>
           </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2">
-            {ROLES.map((r) => (
-              <div key={r} className="rounded-md border p-3">
-                <div className="text-sm font-medium">{ROLE_INFO[r].label}</div>
-                <p className="text-muted-foreground text-xs">{ROLE_INFO[r].description}</p>
-              </div>
-            ))}
+          <CardContent className="grid gap-3 py-4 sm:grid-cols-2">
+            {ROLES.map((r) => {
+              const Icon = ROLE_ICON[r]
+              const count = data.members.filter((m) => m.role === r).length
+              return (
+                <div key={r} className="rounded-md border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-sm font-medium">
+                      <Icon className="text-muted-foreground size-3.5" /> {ROLE_INFO[r].label}
+                    </div>
+                    <span className="text-muted-foreground font-mono text-xs">{count} member{count === 1 ? '' : 's'}</span>
+                  </div>
+                  <p className="text-muted-foreground mt-1 text-xs">{ROLE_INFO[r].description}</p>
+                </div>
+              )
+            })}
           </CardContent>
         </Card>
       </PageBody>

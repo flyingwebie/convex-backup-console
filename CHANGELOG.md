@@ -3,6 +3,54 @@
 All notable changes to the Convex Backup Console. Versions follow [SemVer](https://semver.org); images are
 published as `ghcr.io/flyingwebie/convex-backup-console:<version>`.
 
+## 1.0.0-beta.4 — 2026-11-07
+
+### Added
+
+- **Create bucket for me:** Destinations → a wizard that provisions a Cloudflare R2 or AWS S3 bucket
+  from a one-time setup credential, then mints a brand-new credential scoped to only that bucket (an
+  R2 account token or a least-privilege IAM user) and saves it as a destination. Shows a step-by-step
+  progress log with timings and rolls back anything it created if a later step fails. The setup
+  credential is never persisted, logged, or shown again. When it's done, one click creates the first job
+  for the new destination. The step list is now live: it fills in step by step as provisioning actually
+  runs instead of jumping straight to the end result, mirroring how a restore's log streams in.
+- **Topology map** on the Overview: instances → jobs → destinations, with each connection colored by its
+  last run (running connections animate) and hover to highlight one path.
+- **Command palette (⌘K / Ctrl+K):** jump to any page, instance, job or destination, and run quick actions
+  (new job, add destination, create a bucket, toggle theme). A "Jump to" result now deep-links straight to
+  that row on Instances, Jobs or Destinations — the row scrolls into view and flashes briefly — instead of
+  just opening the list page.
+- **Run pipeline:** every backup shows its export → compress → encrypt → upload steps, expandable in the
+  table and in the run details.
+- **Per-step timings + upload verification:** the run pipeline now shows a real duration for each step (and
+  the live active step while a backup is running), and adds a real Verify step — after each upload, the
+  stored object's size is confirmed against the uploaded file (S3: `HeadObject`, pinned to the returned
+  version; local: `stat`). A verification failure marks that destination's copy failed, same as an upload
+  failure.
+- **Restore lineage:** each restore shows the source backup connected to its target instance above the
+  live log.
+- **Retention timeline** on Storage (latest / daily / weekly / monthly copies per destination) and a
+  clickable chart legend to isolate one destination.
+- Workspace settings get a sticky section menu; workspaces show their accent color in the switcher.
+
+### Changed
+
+- **New design** across every screen: a calmer graphite palette in light and dark, Geist Mono for ids,
+  sizes, cron and logs, status colors used consistently everywhere, and linked chips that take you to the
+  related instance, job, destination or run.
+- Sign-in, verification, first-run setup and invites use a two-pane layout; the setup panel builds the
+  backup topology as you go.
+- Destinations show the provider, lock status and which jobs write to them; Instances show which jobs
+  back them up; Jobs show the instance → destination connection with the schedule and last result.
+- Notifications show Discord / Slack / Telegram logos; the product tour has a new look with step dots.
+- Overview's topology map now stacks into grouped Instances → Jobs → Destinations sections with short
+  connectors and per-node connection chips on narrow screens, instead of scrolling the desktop columns
+  sideways; tapping a node there highlights its path the way hovering does on desktop.
+
+### Fixed
+
+- A stray `0` could render in a restore card's footer.
+
 ## 1.0.0-beta.3 — 2026-11-07
 
 ### Changed

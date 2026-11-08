@@ -4,7 +4,7 @@ import { Activity, Check, Cloud, Copy, Palette, HardDrive, Download, Eye, EyeOff
 import { Badge } from '~/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { timeAgo } from '~/lib/format'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { PageBody, PageHeader } from '~/components/page'
 import { WorkspaceLogo } from '~/components/workspace-logo'
@@ -57,22 +57,120 @@ type Data = Awaited<ReturnType<typeof getWorkspace>> & {
   api: Awaited<ReturnType<typeof getApiTokens>> | null
 }
 
+/** Sections shown in the sticky left nav, in page order — matches the on-page section headings
+ * exactly so scroll-spy highlighting always points at something real. */
+const SETTINGS_SECTIONS = [
+  { id: 'general', label: 'General' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'defaults', label: 'Defaults' },
+  { id: 'api', label: 'API' },
+  { id: 'scrubbing', label: 'Scrubbing' },
+  { id: 'deletion', label: 'Deletion' },
+  { id: 'encryption', label: 'Encryption' },
+  { id: 'danger', label: 'Danger' },
+] as const
+
+/** Sticky in-page nav with scroll-spy (DESIGN.md: Workspace settings pass — sections as cards
+ * under a sticky left nav with scroll-spy, General → … → Danger). Highlights whichever section
+ * heading is currently nearest the top of the viewport; clicking scrolls smoothly to it. */
+function SettingsNav({ sections }: { sections: readonly { id: string; label: string }[] }) {
+  const [active, setActive] = useState(sections[0]?.id)
+  useEffect(() => {
+    // The trigger band sits in the top ~30% of the viewport, so a short final section (Danger)
+    // can scroll past without ever entering it — once the page is scrolled to the bottom, that
+    // takes precedence over whatever the observer last saw, so scroll-spy doesn't get stuck on
+    // the previous section.
+    const atBottom = () => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (atBottom()) return setActive(sections[sections.length - 1]?.id)
+        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
+        if (visible[0]) setActive(visible[0].target.id)
+      },
+      { rootMargin: '-96px 0px -70% 0px', threshold: 0 },
+    )
+    for (const s of sections) {
+      const el = document.getElementById(s.id)
+      if (el) observer.observe(el)
+    }
+    function onScroll() {
+      if (atBottom()) setActive(sections[sections.length - 1]?.id)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('scroll', onScroll)
+    }
+  }, [sections])
+  return (
+    <nav className="sticky top-20 hidden w-40 shrink-0 self-start lg:block" aria-label="Settings sections">
+      <ul className="border-border flex flex-col gap-0.5 border-l">
+        {sections.map((s) => (
+          <li key={s.id}>
+            <a
+              href={`#${s.id}`}
+              className={cn(
+                '-ml-px block border-l-2 px-3 py-1.5 text-sm transition-colors',
+                s.id === 'danger'
+                  ? active === s.id
+                    ? 'border-destructive text-destructive font-medium'
+                    : 'text-destructive/70 hover:text-destructive border-transparent'
+                  : active === s.id
+                    ? 'border-primary text-foreground font-medium'
+                    : 'text-muted-foreground hover:text-foreground border-transparent',
+              )}
+            >
+              {s.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  )
+}
+
 function WorkspaceSettings() {
   const data = Route.useLoaderData()
   const { can } = useWorkspace()
+  const sections = SETTINGS_SECTIONS.filter((s) => (s.id === 'api' ? Boolean(data.api) : s.id === 'danger' ? can('deleteWorkspace') : true))
   return (
     <>
       <PageHeader title="Workspace settings" description={`Identity, defaults and policies for ${data.workspace.name}.`} />
       <PageBody>
-        <GeneralCard data={data} editable={can('settings')} />
-        <AppearanceCard theme={data.settings.theme as Theme} editable={can('settings')} />
-        <DefaultsCard data={data} editable={can('settings')} />
-        <MonitoringCard data={data} editable={can('settings')} />
-        {data.api && <ApiTokensCard api={data.api} />}
-        <ScrubCard rules={data.scrub.rules} editable={can('settings')} />
-        <DeletionCard data={data} editable={can('purge')} />
-        <EncryptionCard data={data} owner={can('encryptionKey')} />
-        {can('deleteWorkspace') && <DangerCard data={data} />}
+        <div className="flex items-start gap-8">
+          <SettingsNav sections={sections} />
+          <div className="flex min-w-0 flex-1 flex-col gap-6">
+            <section id="general" className="scroll-mt-20">
+              <GeneralCard data={data} editable={can('settings')} />
+            </section>
+            <section id="appearance" className="scroll-mt-20">
+              <AppearanceCard theme={data.settings.theme as Theme} editable={can('settings')} />
+            </section>
+            <section id="defaults" className="flex flex-col gap-6 scroll-mt-20">
+              <DefaultsCard data={data} editable={can('settings')} />
+              <MonitoringCard data={data} editable={can('settings')} />
+            </section>
+            {data.api && (
+              <section id="api" className="scroll-mt-20">
+                <ApiTokensCard api={data.api} />
+              </section>
+            )}
+            <section id="scrubbing" className="scroll-mt-20">
+              <ScrubCard rules={data.scrub.rules} editable={can('settings')} />
+            </section>
+            <section id="deletion" className="scroll-mt-20">
+              <DeletionCard data={data} editable={can('purge')} />
+            </section>
+            <section id="encryption" className="scroll-mt-20">
+              <EncryptionCard data={data} owner={can('encryptionKey')} />
+            </section>
+            {can('deleteWorkspace') && (
+              <section id="danger" className="scroll-mt-20">
+                <DangerCard data={data} />
+              </section>
+            )}
+          </div>
+        </div>
       </PageBody>
     </>
   )
