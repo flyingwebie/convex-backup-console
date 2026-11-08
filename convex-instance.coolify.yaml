@@ -80,6 +80,12 @@ services:
   # ──────────────────────────────────────────────────────────────
   backend:
     image: ghcr.io/convex/convex-backend:${CONVEX_VERSION:-latest}
+    # Required descriptor headroom for database files and network sockets.
+    # Confirm the Docker host's fs.nr_open is at least 1048576.
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     depends_on:
       postgres:
         condition: service_healthy
