@@ -27,8 +27,18 @@ Two ready-to-use [Coolify](https://coolify.io) service templates:
 > After the first deploy, **copy `SERVICE_PASSWORD_64_MASTERKEY` into your password manager.** It
 > encrypts every stored admin key, deploy key, S3 secret and age key.
 
-**Convex instance**: nothing to fill in. After deploying, open the backend's terminal, run
-`./generate_admin_key.sh`, and add the instance to the console with its API URL (`SERVICE_URL_BACKEND`).
+**Convex instance**
+
+| Variable | Required | Notes |
+|---|---|---|
+| `CONVEX_SITE_PUBLIC_URL` | ✅ | Public URL of Convex HTTP actions: the domain you route to port `3211` on the backend service, e.g. `https://convex-site.example.com` (https, no port, no trailing slash). Coolify blocks the deploy while it is empty. Convex hands it to your functions as `process.env.CONVEX_SITE_URL`. |
+
+It is a variable you set yourself because the managed `SERVICE_URL_SITE` cannot be edited in Coolify and
+has been seen holding the API domain instead of the site domain. Details:
+[convex-on-coolify.md](convex-on-coolify.md#12-assign-domains).
+
+After deploying, open the backend's terminal, run `./generate_admin_key.sh`, and add the instance to the
+console with its API URL (`SERVICE_URL_BACKEND`).
 
 4. **Deploy.**
 
