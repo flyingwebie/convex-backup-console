@@ -7,6 +7,14 @@
 #
 # Back it up with the Convex Backup Console template: add this instance with its API URL
 # and an admin key (backend terminal → ./generate_admin_key.sh).
+#
+# Required variable (set it under Environment Variables before deploying):
+#   CONVEX_SITE_PUBLIC_URL  public URL of Convex HTTP actions, i.e. the domain routed to port 3211,
+#                           e.g. https://convex-site.example.com (https, no port, no trailing slash).
+# The backend receives it as CONVEX_SITE_ORIGIN, which Convex exposes to your functions as
+# process.env.CONVEX_SITE_URL. It is deliberately not taken from the managed SERVICE_URL_SITE:
+# on a live deployment Coolify filled that variable with the API domain, so upload and OAuth
+# callback URLs built from CONVEX_SITE_URL pointed at the API host and returned 404.
 
 services:
   # ──────────────────────────────────────────────────────────────
@@ -105,7 +113,10 @@ services:
       # URL of the Convex API as accessed by the client/frontend.
       - CONVEX_CLOUD_ORIGIN=${SERVICE_URL_BACKEND}
       # URL of Convex HTTP actions as accessed by the client/frontend.
-      - CONVEX_SITE_ORIGIN=${SERVICE_URL_SITE}
+      # Required, user-set (see the header). Do not switch this back to ${SERVICE_URL_SITE}:
+      # that managed value cannot be edited in Coolify and has resolved to the API domain.
+      # SERVICE_URL_SITE_3211 above stays, it is what routes the site domain to port 3211.
+      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_PUBLIC_URL:?}
       - DISABLE_BEACON=${DISABLE_BEACON:-true}
       - REDACT_LOGS_TO_CLIENT=${REDACT_LOGS_TO_CLIENT:-false}
       # Postgres is on the internal Docker network -> no SSL needed.

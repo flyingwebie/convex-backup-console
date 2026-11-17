@@ -85,7 +85,7 @@ Three separate HTTPS domains are **required** — Convex clients refuse plain HT
 | Variable                     | Example domain                     | Container port | Notes                              |
 | ---------------------------- | ----------------------------------- | -------------- | ---------------------------------- |
 | `SERVICE_URL_BACKEND_3210`   | `https://backend.example.com`  | `3210`         | Convex API (`CONVEX_CLOUD_ORIGIN`) |
-| `SERVICE_URL_SITE_3211`      | `https://site.example.com`     | `3211`         | HTTP actions (`CONVEX_SITE_ORIGIN`)|
+| `SERVICE_URL_SITE_3211`      | `https://site.example.com`     | `3211`         | HTTP actions (routing only; see `CONVEX_SITE_PUBLIC_URL` below) |
 | `SERVICE_URL_DASHBOARD_6791` | `https://dashboard.example.com`| `6791`         | Dashboard                          |
 | `SERVICE_URL_RUSTFS_9000`    | `https://s3.example.com`       | `9000`         | *Optional* — RustFS S3 API         |
 | `SERVICE_URL_CONSOLE_9001`   | `https://s3-console.example.com`| `9001`        | *Optional* — RustFS admin console  |
@@ -98,16 +98,26 @@ https://backend.example.com:3210,https://site.example.com:3211
 
 (The `:3210` / `:3211` suffix tells Coolify's Traefik which container port to route each domain to — the public URLs remain standard `443` HTTPS.)
 
-After saving, verify that the container env got populated correctly and **redeploy**:
+Then set the one variable the template requires. In **Environment Variables**, add:
+
+```env
+CONVEX_SITE_PUBLIC_URL=https://site.example.com
+```
+
+That is the `3211` domain from the table above: https, no port, no trailing slash. Coolify refuses to deploy while it is empty. The template passes it to the backend as `CONVEX_SITE_ORIGIN`, and Convex exposes it to your functions as `process.env.CONVEX_SITE_URL`.
+
+> **Why a separate variable?** The template used to set `CONVEX_SITE_ORIGIN=${SERVICE_URL_SITE}`. `SERVICE_URL_SITE` is managed by Coolify and cannot be edited in the UI, and on a production deployment it held the API (`3210`) domain instead of the site domain. Routing still worked, but any code that built a URL from `process.env.CONVEX_SITE_URL` (upload URLs, OAuth callbacks) pointed at the API host and got a 404. `SERVICE_URL_SITE_3211` is still declared in the template because it is what routes the site domain to port `3211`; only the value handed to Convex now comes from `CONVEX_SITE_PUBLIC_URL`.
+
+After saving, **redeploy** and verify what the running backend sees:
 
 - `CONVEX_CLOUD_ORIGIN` → the `3210` domain
 - `CONVEX_SITE_ORIGIN` → the `3211` domain
 
-If Coolify didn't populate `SERVICE_URL_SITE`, set `CONVEX_SITE_ORIGIN` manually in the environment variables. You can check what the running backend actually sees with:
-
 ```bash
 docker compose exec backend env | grep -E 'CONVEX_(CLOUD|SITE)_ORIGIN'
 ```
+
+**Upgrading an existing deployment:** replace the compose with the current `convex-instance.coolify.yaml`, add `CONVEX_SITE_PUBLIC_URL` as above, and redeploy. Until the variable is set the deploy is blocked, so an old wrong value cannot carry over silently.
 
 > **No trailing slashes anywhere.** `https://backend.example.com` — not `https://backend.example.com/`. The Convex CLI concatenates paths onto these URLs, and a trailing slash causes silent `Retrying request...` loops in `npx convex dev` / `deploy`.
 
